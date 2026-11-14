@@ -45,7 +45,7 @@ fn config_yaml(services: &[(&str, u16, &str)]) -> String {
     yaml
 }
 
-fn manager(dir: &Path, yaml: &str) -> ProcessManager {
+fn manager(dir: &Path, yaml: &str) -> std::sync::Arc<ProcessManager> {
     let config: Config = serde_yaml_ng::from_str(yaml).expect("yaml parses");
     let registry = Registry::from_config(config, dir).expect("registry builds");
     ProcessManager::new(registry, &dir.join(".rom")).expect("manager builds")

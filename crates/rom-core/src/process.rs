@@ -15,6 +15,7 @@ use tokio::process::Command;
 use tokio::sync::{Mutex as AsyncMutex, watch};
 use tokio::time::{sleep, timeout};
 
+use crate::config::Mode;
 use crate::error::RomError;
 use crate::job::JobObject;
 use crate::registry::{Registry, ServiceDef};
@@ -77,6 +78,9 @@ struct Slot {
     last_error: Option<String>,
     restart_count: u32,
     instance: Option<Instance>,
+    active_connections: usize,
+    /// Bumped to cancel a pending idle-stop task.
+    idle_generation: u64,
 }
 
 impl Slot {
@@ -86,6 +90,8 @@ impl Slot {
             last_error: None,
             restart_count: 0,
             instance: None,
+            active_connections: 0,
+            idle_generation: 0,
         }
     }
 }
@@ -101,20 +107,20 @@ pub struct ProcessManager {
 }
 
 impl ProcessManager {
-    pub fn new(registry: Registry, state_dir: &Path) -> io::Result<Self> {
+    pub fn new(registry: Registry, state_dir: &Path) -> io::Result<Arc<Self>> {
         let log_dir = state_dir.join("logs");
         fs::create_dir_all(&log_dir)?;
         let slots = registry
             .services()
             .map(|def| (def.name.clone(), Slot::sleeping()))
             .collect();
-        Ok(Self {
+        Ok(Arc::new(Self {
             registry,
             log_dir,
             compile_cache_dir: state_dir.join("compile-cache"),
             slots: Arc::new(Mutex::new(slots)),
             lifecycle: AsyncMutex::new(()),
-        })
+        }))
     }
 
     pub fn registry(&self) -> &Registry {
@@ -126,46 +132,80 @@ impl ProcessManager {
     }
 
     /// Starts the given services and whatever they depend on. Returns the services that were started.
-    pub async fn start(&self, targets: &[String]) -> Result<Vec<String>, RomError> {
+    pub async fn start(self: &Arc<Self>, targets: &[String]) -> Result<Vec<String>, RomError> {
         let _guard = self.lifecycle.lock().await;
-        self.start_locked(targets).await
+        let started = self.start_locked(targets).await?;
+        for name in &started {
+            self.arm_idle_if_needed(name);
+        }
+        Ok(started)
     }
 
     /// Ensures `name` (and its dependencies) are running, then returns the process listen port.
     /// Concurrent callers share a single start: the lifecycle lock serializes them, and the
     /// second caller finds the service already active.
-    pub async fn ensure_ready(&self, name: &str) -> Result<u16, RomError> {
+    pub async fn ensure_ready(self: &Arc<Self>, name: &str) -> Result<u16, RomError> {
         let _guard = self.lifecycle.lock().await;
         self.registry.get(name)?;
         if let Some(port) = self.listen_port_of(name) {
             return Ok(port);
         }
-        self.start_locked(&[name.to_owned()]).await?;
+        let started = self.start_locked(&[name.to_owned()]).await?;
+        for started_name in &started {
+            self.arm_idle_if_needed(started_name);
+        }
         self.listen_port_of(name).ok_or_else(|| RomError::StartFailed {
             service: name.to_owned(),
             reason: "service started but has no listen port".to_owned(),
         })
     }
 
+    /// Marks a proxied connection as active (cancels any pending idle stop).
+    pub fn connection_opened(self: &Arc<Self>, name: &str) {
+        let mut slots = lock(&self.slots);
+        if let Some(slot) = slots.get_mut(name) {
+            slot.active_connections += 1;
+            slot.idle_generation = slot.idle_generation.wrapping_add(1);
+        }
+    }
+
+    /// Marks a proxied connection as finished. Arms idle stop when none remain.
+    pub fn connection_closed(self: &Arc<Self>, name: &str) {
+        let should_arm = {
+            let mut slots = lock(&self.slots);
+            let Some(slot) = slots.get_mut(name) else {
+                return;
+            };
+            slot.active_connections = slot.active_connections.saturating_sub(1);
+            slot.active_connections == 0 && slot.state == ServiceState::Running
+        };
+        if should_arm {
+            self.arm_idle_if_needed(name);
+        }
+    }
+
     /// Stops the given services. Fails if running services depend on them, unless `force` is set,
     /// in which case those dependents are stopped first.
-    pub async fn stop(&self, targets: &[String], force: bool) -> Result<Vec<String>, RomError> {
+    pub async fn stop(self: &Arc<Self>, targets: &[String], force: bool) -> Result<Vec<String>, RomError> {
         let _guard = self.lifecycle.lock().await;
         self.stop_locked(targets, force).await
     }
 
     /// Restarts one service. Its dependencies keep running; running dependents are not touched.
-    pub async fn restart(&self, name: &str) -> Result<(), RomError> {
+    pub async fn restart(self: &Arc<Self>, name: &str) -> Result<(), RomError> {
         let _guard = self.lifecycle.lock().await;
         self.registry.get(name)?;
         self.stop_one(name).await?;
         self.update(name, |slot| slot.restart_count += 1);
-        self.start_locked(&[name.to_owned()]).await?;
+        let started = self.start_locked(&[name.to_owned()]).await?;
+        for started_name in &started {
+            self.arm_idle_if_needed(started_name);
+        }
         Ok(())
     }
 
     /// Stops every service, dependents first.
-    pub async fn shutdown(&self) -> Result<(), RomError> {
+    pub async fn shutdown(self: &Arc<Self>) -> Result<(), RomError> {
         let all = self.registry.names();
         self.stop(&all, true).await.map(drop)
     }
@@ -303,6 +343,7 @@ impl ProcessManager {
             let Some(slot) = slots.get_mut(name) else {
                 return Ok(());
             };
+            slot.idle_generation = slot.idle_generation.wrapping_add(1);
             match &slot.instance {
                 None => {
                     slot.state = ServiceState::Sleeping;
@@ -319,6 +360,58 @@ impl ProcessManager {
         };
         job.terminate()?;
         self.await_exit(name, exited).await
+    }
+
+    fn arm_idle_if_needed(self: &Arc<Self>, name: &str) {
+        let Ok(def) = self.registry.get(name) else {
+            return;
+        };
+        if def.mode == Mode::Persistent {
+            return;
+        }
+        let generation = {
+            let mut slots = lock(&self.slots);
+            let Some(slot) = slots.get_mut(name) else {
+                return;
+            };
+            if slot.active_connections > 0 || slot.state != ServiceState::Running {
+                return;
+            }
+            slot.idle_generation = slot.idle_generation.wrapping_add(1);
+            slot.idle_generation
+        };
+        let timeout = self.registry.idle_timeout;
+        let this = Arc::clone(self);
+        let name = name.to_owned();
+        tokio::spawn(async move {
+            sleep(timeout).await;
+            this.run_idle_stop(&name, generation).await;
+        });
+    }
+
+    async fn run_idle_stop(self: &Arc<Self>, name: &str, generation: u64) {
+        let _guard = self.lifecycle.lock().await;
+        let should_stop = {
+            let slots = lock(&self.slots);
+            let Some(slot) = slots.get(name) else {
+                return;
+            };
+            let is_on_demand = self
+                .registry
+                .get(name)
+                .is_ok_and(|def| def.mode == Mode::OnDemand);
+            slot.idle_generation == generation
+                && slot.active_connections == 0
+                && slot.state == ServiceState::Running
+                && is_on_demand
+        };
+        if !should_stop {
+            return;
+        }
+        tracing::info!(service = %name, "stopping idle service");
+        if let Err(error) = self.stop_one(name).await {
+            tracing::warn!(service = %name, %error, "idle stop failed");
+        }
     }
 
     async fn await_exit(&self, name: &str, mut exited: watch::Receiver<bool>) -> Result<(), RomError> {

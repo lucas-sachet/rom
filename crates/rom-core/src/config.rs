@@ -38,6 +38,12 @@ pub struct Runtime {
     pub startup_timeout: Duration,
     #[serde(deserialize_with = "deserialize_duration")]
     pub shutdown_timeout: Duration,
+    /// Stop an on-demand service after this long with no proxied connections.
+    #[serde(deserialize_with = "deserialize_duration")]
+    pub idle_timeout: Duration,
+    /// Close a proxied connection after this long with no bytes in either direction.
+    #[serde(deserialize_with = "deserialize_duration")]
+    pub connection_idle: Duration,
 }
 
 impl Default for Runtime {
@@ -45,6 +51,8 @@ impl Default for Runtime {
         Self {
             startup_timeout: Duration::from_secs(30),
             shutdown_timeout: Duration::from_secs(30),
+            idle_timeout: Duration::from_secs(30),
+            connection_idle: Duration::from_secs(5),
         }
     }
 }
@@ -57,7 +65,7 @@ pub struct ServiceConfig {
     #[serde(default)]
     pub args: Vec<String>,
     pub port: u16,
-    /// Accepted for forward compatibility; idle stop (stage 3) will honour `persistent`.
+    /// `persistent` services are never stopped for idle (queues, cron).
     #[serde(default)]
     pub mode: Mode,
     #[serde(default)]

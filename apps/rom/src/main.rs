@@ -26,6 +26,8 @@ project:
 runtime:
   startup_timeout: 30s
   shutdown_timeout: 30s
+  idle_timeout: 30s
+  connection_idle: 5s
 
 # Services go under `services:`. Example:
 #
@@ -34,6 +36,7 @@ runtime:
 #    command: node
 #    args: [server.js]
 #    port: 3001
+#    mode: on-demand    # or `persistent` (never idle-stopped)
 #    health:            # optional; without it, readiness is "port accepts connections"
 #      type: http
 #      path: /health
@@ -260,7 +263,7 @@ async fn daemon(project: &Project, action: DaemonAction) -> Result<()> {
 
 async fn run_daemon(project: &Project) -> Result<()> {
     let registry = project.registry()?;
-    let manager = Arc::new(ProcessManager::new(registry, &project.state_dir)?);
+    let manager = ProcessManager::new(registry, &project.state_dir)?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let ctrl_c_tx = shutdown_tx.clone();

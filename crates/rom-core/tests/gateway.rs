@@ -37,7 +37,7 @@ fn config_yaml(services: &[(&str, u16, &str)]) -> String {
     yaml
 }
 
-fn manager(dir: &Path, yaml: &str) -> ProcessManager {
+fn manager(dir: &Path, yaml: &str) -> Arc<ProcessManager> {
     let config: Config = serde_yaml_ng::from_str(yaml).expect("yaml parses");
     let registry = Registry::from_config(config, dir).expect("registry builds");
     ProcessManager::new(registry, &dir.join(".rom")).expect("manager builds")
@@ -82,14 +82,14 @@ async fn http_get_body(port: u16) -> String {
 async fn connection_starts_dependencies_and_serves_the_original_client() {
     let dir = scratch("wake");
     fs::write(dir.join("server.js"), HTTP_SERVER).unwrap();
-    let pm = Arc::new(manager(
+    let pm = manager(
         &dir,
         &config_yaml(&[
             ("billing", 39120, ""),
             ("user", 39121, ""),
             ("finance", 39122, "user"),
         ]),
-    ));
+    );
 
     assert_eq!(state(&pm, "billing"), ServiceState::Sleeping);
     assert_eq!(state(&pm, "user"), ServiceState::Sleeping);
@@ -118,7 +118,7 @@ async fn connection_starts_dependencies_and_serves_the_original_client() {
 async fn concurrent_connections_create_a_single_process() {
     let dir = scratch("coalesce");
     fs::write(dir.join("server.js"), HTTP_SERVER).unwrap();
-    let pm = Arc::new(manager(&dir, &config_yaml(&[("api", 39123, "")])));
+    let pm = manager(&dir, &config_yaml(&[("api", 39123, "")]));
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let gateway = Gateway::bind(&pm).await.expect("bind public ports");

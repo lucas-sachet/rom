@@ -2,14 +2,17 @@
 //!
 //! A connection on a sleeping service starts that service (and its dependencies) once;
 //! concurrent clients share the same start via `ProcessManager::ensure_ready`.
+//! Quiet keep-alive connections are closed after `connection_idle` with no bytes.
 
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use tokio::io::copy_bidirectional;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
+use tokio::time::sleep;
 
 use crate::process::ProcessManager;
 
@@ -93,10 +96,62 @@ async fn accept_loop(
     }
 }
 
-async fn proxy(mut client: TcpStream, manager: &ProcessManager, name: &str) -> io::Result<()> {
+async fn proxy(mut client: TcpStream, manager: &Arc<ProcessManager>, name: &str) -> io::Result<()> {
     let listen_port = manager.ensure_ready(name).await.map_err(io::Error::other)?;
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, listen_port));
     let mut upstream = TcpStream::connect(addr).await?;
-    let _ = copy_bidirectional(&mut client, &mut upstream).await;
-    Ok(())
+    manager.connection_opened(name);
+    let _guard = ConnectionGuard {
+        manager: Arc::clone(manager),
+        name: name.to_owned(),
+    };
+    let idle = manager.registry().connection_idle;
+    copy_until_quiet(&mut client, &mut upstream, idle).await
+}
+
+struct ConnectionGuard {
+    manager: Arc<ProcessManager>,
+    name: String,
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        self.manager.connection_closed(&self.name);
+    }
+}
+
+/// Bidirectional copy that ends when either side closes or no bytes flow for `quiet`.
+async fn copy_until_quiet(
+    left: &mut TcpStream,
+    right: &mut TcpStream,
+    quiet: Duration,
+) -> io::Result<()> {
+    let mut left_buf = vec![0u8; 16 * 1024];
+    let mut right_buf = vec![0u8; 16 * 1024];
+    let mut last_activity = Instant::now();
+
+    loop {
+        let wait = quiet.saturating_sub(last_activity.elapsed());
+        tokio::select! {
+            result = left.read(&mut left_buf) => {
+                match result? {
+                    0 => return Ok(()),
+                    n => {
+                        right.write_all(&left_buf[..n]).await?;
+                        last_activity = Instant::now();
+                    }
+                }
+            }
+            result = right.read(&mut right_buf) => {
+                match result? {
+                    0 => return Ok(()),
+                    n => {
+                        left.write_all(&right_buf[..n]).await?;
+                        last_activity = Instant::now();
+                    }
+                }
+            }
+            () = sleep(wait) => return Ok(()),
+        }
+    }
 }

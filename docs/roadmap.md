@@ -36,8 +36,14 @@ Ambiente desta máquina: Windows nativo, sem distro Linux no WSL (só `docker-de
 - Gateway escuta `127.0.0.1` em cada porta pública do yaml e faz proxy TCP (HTTP, WebSocket e SSE passam).
 - O processo recebe uma porta interna livre em `PORT`; a porta do yaml é só a pública.
 - Conexão em serviço dormindo sobe ele e as dependências do yaml uma vez só (`ensure_ready`); clientes simultâneos compartilham a subida.
-- Ainda não desliga por ociosidade.
-- Testes em `crates/rom-core/tests/gateway.rs` + lifecycle. `cargo clippy --workspace --all-targets -- -D warnings` limpo.
+
+### Etapa 3 — Ociosidade
+
+- `runtime.idle_timeout` (padrão 30s) e `runtime.connection_idle` (padrão 5s).
+- Conexão proxied com tráfego mantém o serviço ocupado; keep-alive sem bytes é fechado após `connection_idle`.
+- On-demand sem conexões para após `idle_timeout`. `mode: persistent` nunca para por ociosidade.
+- Idle stop não consulta dependentes: se o finance ainda precisa do user, a próxima chamada na porta pública sobe de novo.
+- Testes em `gateway.rs`, `idle.rs` e lifecycle.
 
 O push para `git@github.com:lucas-sachet/rom.git` pode falhar com `Permission denied (publickey)`. A identidade deste repositório é `Lucas Sachet <lucasachet@gmail.com>` (não usar o e-mail global da máquina).
 
@@ -70,15 +76,9 @@ Cada etapa termina com teste automatizado e um ensaio manual. Não começar a pr
 
 ### Etapa 2 — Gateway TCP e subida sob demanda — feita
 
+### Etapa 3 — Ociosidade — feita
+
 Ver secção "O que já está pronto".
-
-### Etapa 3 — Ociosidade
-
-Conexão aberta (incluindo SSE e WebSocket) mantém o serviço ocupado. Keep-alive sem bytes nos dois sentidos é fechado depois de 5s (configurável) e não conta como atividade. Esgotado o idle, o gateway para de aceitar, espera as conexões restantes e para o serviço.
-
-`mode: persistent` nunca para por ociosidade (fila, cron). O yaml ainda não tem esse campo; adicionar junto com a etapa.
-
-Serviço `persistent` e serviço com consumidor ativo não param. Dependência declarada no yaml é dica de ordem (`start_before`), não a única forma de subir: chamada pela porta pública também liga o destino.
 
 ### Etapa 4 — Watcher no lugar do nodemon
 

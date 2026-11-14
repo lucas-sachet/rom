@@ -47,7 +47,7 @@ pub async fn serve(
 
 async fn handle(
     pipe: NamedPipeServer,
-    manager: &ProcessManager,
+    manager: &Arc<ProcessManager>,
     shutdown_tx: &watch::Sender<bool>,
 ) -> Result<(), RomError> {
     let (reader, mut writer) = tokio::io::split(pipe);
@@ -81,7 +81,7 @@ async fn handle(
     Ok(())
 }
 
-async fn dispatch(request: Request, manager: &ProcessManager) -> (Response, bool) {
+async fn dispatch(request: Request, manager: &Arc<ProcessManager>) -> (Response, bool) {
     match request {
         Request::Status => (
             Response::Status {

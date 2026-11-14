@@ -2,7 +2,7 @@
 
 **Runtime Orchestrator for Microservices.** A local runtime that starts Node.js microservices on demand, stops them when they are idle, and keeps development machines light.
 
-> Status: stage 2 is done (TCP gateway and on-demand start). Next is idle stop. Plan, decisions and the real monorepo notes are in [docs/roadmap.md](docs/roadmap.md).
+> Status: stage 3 is done (idle stop). Next is the file watcher. Plan, decisions and the real monorepo notes are in [docs/roadmap.md](docs/roadmap.md).
 
 ## Why
 
@@ -54,14 +54,16 @@ project:
 runtime:
   startup_timeout: 30s
   shutdown_timeout: 30s
+  idle_timeout: 30s             # stop on-demand services with no proxied connections
+  connection_idle: 5s           # close keep-alive with no bytes either way
 
 services:
   user-service:
     path: ./user-service
     command: node
     args: [server.js]
-    port: 3001                  # the port the service listens on (passed as PORT)
-    health:                     # optional; without it, "ready" means the port accepts connections
+    port: 3001                  # public port (gateway); process gets a free PORT
+    health:                     # optional; without it, "ready" means the listen port accepts connections
       type: http
       path: /health
     dependencies: []
@@ -71,6 +73,7 @@ services:
     command: node
     args: [server.js]
     port: 3002
+    mode: on-demand             # or `persistent` for queues/cron (never idle-stopped)
     dependencies:
       - user-service
 
@@ -84,7 +87,8 @@ Notes:
 - `command` is run without a shell. Use `node` and pass the script in `args`. `.cmd` shims such as `npm`, `npx` or `ts-node` cannot be launched directly. For TypeScript with `ts-node`, use `command: node` with `args: [-r, ts-node/register, server.ts]`.
 - The port in the yaml is the **public** port. The daemon's TCP gateway listens on `127.0.0.1` there and proxies to the process.
 - Each service gets a free **listen** port as `PORT`, plus `ROM_SERVICE` and anything in `env:`. Node services also get `NODE_COMPILE_CACHE` (Node 22.1+, so 26 LTS), which keeps V8 bytecode between restarts.
-- A connection to a sleeping service starts it (and its yaml dependencies) once; concurrent clients share that start. Idle stop is not implemented yet.
+- A connection to a sleeping service starts it (and its yaml dependencies) once; concurrent clients share that start.
+- On-demand services stop after `idle_timeout` with no open proxied connections. Quiet keep-alives are closed after `connection_idle` and do not keep the service busy. `mode: persistent` never idle-stops.
 - Design notes for the gateway, idle detection and shutdown are in [docs/decisions.md](docs/decisions.md).
 - Service directories are used as-is. Each service keeps its own `node_modules`.
 - Validation reports duplicate ports, unknown dependencies, dependency cycles, missing directories and unknown profile members.
@@ -125,6 +129,7 @@ apps/rom/            CLI and daemon binary
 crates/rom-core/     config, registry, process manager, gateway, IPC, Job Object wrapper
 crates/rom-core/tests/lifecycle.rs   process lifecycle with real Node processes
 crates/rom-core/tests/gateway.rs     TCP gateway and on-demand start
+crates/rom-core/tests/idle.rs        idle stop and quiet keep-alives
 ```
 
 ## License
