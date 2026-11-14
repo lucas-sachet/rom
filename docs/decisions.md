@@ -20,6 +20,10 @@ There is no `rom` npm package. Services that already drain on `SIGTERM` / `SIGBR
 
 `rom discover` only suggests a yaml. It never overwrites `rom.yaml` unless `--write --force` is passed. Dependencies are left empty — local package graphs are not turned into runtime start edges automatically. Each package directory with its own entrypoint stays its own service; similar code is never merged into one process. The checked-in / confirmed `rom.yaml` remains the source of truth for the registry.
 
+## Metrics
+
+Status reports working set and cumulative CPU time per service process, plus the same for the daemon as a separate line. Working set on Windows is not exclusive physical RAM (shared pages, overcommit), so values must never be summed and labelled as total RAM. Active proxied connections and seconds since last connection open/close (or start) are included so idle behaviour is visible without inventing a fake memory total.
+
 ## Watcher
 
 One `notify` watcher per project. Directories are registered non-recursively and ignored names (`node_modules`, `.git`, `dist`, …) are skipped while walking, so Windows never attaches a subtree watch under those trees. Sleeping services are not started by file changes. Presence of `.git/index.lock` pauses reloads until the lock is gone.

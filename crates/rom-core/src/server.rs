@@ -80,12 +80,16 @@ async fn handle(
 
 async fn dispatch(request: Request, manager: &Arc<ProcessManager>) -> (Response, bool) {
     match request {
-        Request::Status => (
-            Response::Status {
-                services: manager.status(),
-            },
-            false,
-        ),
+        Request::Status => {
+            let snapshot = manager.status_snapshot();
+            (
+                Response::Status {
+                    daemon: snapshot.daemon,
+                    services: snapshot.services,
+                },
+                false,
+            )
+        }
         Request::Start { services } => (to_response(manager.start(&services).await), false),
         Request::Stop { services, force } => (to_response(manager.stop(&services, force).await), false),
         Request::Restart { service } => {

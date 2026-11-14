@@ -12,6 +12,7 @@ use rom_core::detach::spawn_detached;
 use rom_core::discover;
 use rom_core::gateway;
 use rom_core::ipc::{self, Request, Response, pipe_name};
+use rom_core::metrics;
 use rom_core::process::{ProcessManager, ServiceState, ServiceStatus, read_tail};
 use rom_core::registry::Registry;
 use rom_core::watcher;
@@ -409,9 +410,21 @@ async fn send(project: &Project, request: Request) -> Result<Vec<String>> {
 async fn status(project: &Project) -> Result<()> {
     let registry = project.registry()?;
     let services = if is_running(project).await {
-        println!("daemon: running");
         match ipc::request(&project.pipe, &Request::Status).await? {
-            Response::Status { services } => services,
+            Response::Status { daemon, services } => {
+                println!(
+                    "daemon: pid={} uptime={} working_set={} cpu={} (working set is not exclusive RAM)",
+                    daemon.pid,
+                    format_uptime(daemon.uptime_secs),
+                    daemon
+                        .working_set_bytes
+                        .map_or_else(|| "-".to_owned(), metrics::format_bytes),
+                    daemon
+                        .cpu_time_secs
+                        .map_or_else(|| "-".to_owned(), |secs| format!("{secs:.1}s")),
+                );
+                services
+            }
             Response::Error { message } => bail!(message),
             Response::Ok { .. } => bail!("daemon sent an unexpected response"),
         }
@@ -427,6 +440,10 @@ async fn status(project: &Project) -> Result<()> {
                 pid: None,
                 uptime_secs: None,
                 restart_count: 0,
+                active_connections: 0,
+                last_activity_secs_ago: None,
+                working_set_bytes: None,
+                cpu_time_secs: None,
                 last_error: None,
             })
             .collect()
@@ -437,12 +454,12 @@ async fn status(project: &Project) -> Result<()> {
 
 fn print_table(services: &[ServiceStatus]) {
     println!(
-        "{:<22} {:<14} {:>6} {:>7} {:>9} {:>8}  LAST ERROR",
-        "SERVICE", "STATE", "PORT", "PID", "UPTIME", "RESTARTS"
+        "{:<22} {:<14} {:>6} {:>7} {:>9} {:>5} {:>4} {:>8} {:>8} {:>8}  LAST ERROR",
+        "SERVICE", "STATE", "PORT", "PID", "UPTIME", "CONNS", "RST", "WSET", "CPU", "ACTIVE"
     );
     for service in services {
         println!(
-            "{:<22} {:<14} {:>6} {:>7} {:>9} {:>8}  {}",
+            "{:<22} {:<14} {:>6} {:>7} {:>9} {:>5} {:>4} {:>8} {:>8} {:>8}  {}",
             service.name,
             service.state.to_string(),
             service.port,
@@ -450,7 +467,17 @@ fn print_table(services: &[ServiceStatus]) {
             service
                 .uptime_secs
                 .map_or_else(|| "-".to_owned(), format_uptime),
+            service.active_connections,
             service.restart_count,
+            service
+                .working_set_bytes
+                .map_or_else(|| "-".to_owned(), metrics::format_bytes),
+            service
+                .cpu_time_secs
+                .map_or_else(|| "-".to_owned(), |secs| format!("{secs:.1}s")),
+            service
+                .last_activity_secs_ago
+                .map_or_else(|| "-".to_owned(), |secs| format!("{secs}s")),
             service.last_error.as_deref().unwrap_or("")
         );
     }

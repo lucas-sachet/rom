@@ -60,6 +60,12 @@ Ambiente desta máquina: Windows nativo, sem distro Linux no WSL (só `docker-de
 - Não grava por cima de `rom.yaml` sem `--write` (e `--force` se já existir). Dependencies ficam vazias de propósito.
 - Não junta pacotes parecidos num único serviço. O registry/`rom.yaml` continua sendo a verdade.
 
+### Etapa 7 — Métricas
+
+- `rom status` reporta por serviço: estado, PID, uptime, restarts, conexões ativas, última atividade, working set e CPU.
+- O custo do daemon (PID, uptime, working set, CPU) vem separado dos serviços.
+- Working set no Windows não é RAM exclusiva — o CLI avisa e o código nunca soma working sets como memória física.
+
 O push para `git@github.com:lucas-sachet/rom.git` pode falhar com `Permission denied (publickey)`. A identidade deste repositório é `Lucas Sachet <lucasachet@gmail.com>` (não usar o e-mail global da máquina).
 
 O `rom.yaml` do tex **não** está neste repositório. Está em `D:\TI\tex\dev\tex-backend-dev\rom.yaml` (não commitado lá). `rom check` passou: 38 serviços, profiles iguais aos scripts `start:*`. Três serviços ficaram de fora:
@@ -99,11 +105,9 @@ Cada etapa termina com teste automatizado e um ensaio manual. Não começar a pr
 
 ### Etapa 6 — Descoberta — feita
 
+### Etapa 7 — Métricas — feita
+
 Ver secção "O que já está pronto".
-
-### Etapa 7 — Métricas
-
-PID, estado, memória, CPU, conexões ativas, tempo de subida, restarts, última atividade. Separar o custo do daemon do custo dos serviços. No Windows, não publicar soma de RSS como RAM real.
 
 ### Etapa 8 — Linux e macOS
 

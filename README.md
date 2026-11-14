@@ -2,7 +2,7 @@
 
 **Runtime Orchestrator for Microservices.** A local runtime that starts Node.js microservices on demand, stops them when they are idle, and keeps development machines light.
 
-> Status: stage 6 is done (service discovery). Next is metrics. Plan, decisions and the real monorepo notes are in [docs/roadmap.md](docs/roadmap.md).
+> Status: stage 7 is done (metrics). Next is Linux/macOS. Plan, decisions and the real monorepo notes are in [docs/roadmap.md](docs/roadmap.md).
 
 ## Why
 
@@ -108,7 +108,7 @@ Notes:
 | `rom start [SERVICES] [-p PROFILE] [--all]` | Starts services and their dependencies |
 | `rom stop [SERVICES] [-p PROFILE] [--all] [--force]` | Stops services. Refuses if running services depend on them, unless `--force` |
 | `rom restart SERVICE` | Restarts one service; its dependencies keep running |
-| `rom status` | Shows state, port, PID, uptime, restarts and last error |
+| `rom status` | Shows daemon cost plus per-service state, port, PID, uptime, connections, restarts, working set, CPU, last activity and last error |
 | `rom logs SERVICE [-n N] [-f]` | Prints or follows a service log |
 | `rom daemon start \| stop \| run` | Manages the background daemon (`run` stays in the foreground) |
 

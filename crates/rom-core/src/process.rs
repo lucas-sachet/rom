@@ -20,6 +20,7 @@ use crate::config::Mode;
 use crate::console::{hide_console_windows, send_ctrl_break};
 use crate::error::RomError;
 use crate::job::JobObject;
+use crate::metrics;
 use crate::registry::{Registry, ServiceDef};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -63,7 +64,31 @@ pub struct ServiceStatus {
     pub pid: Option<u32>,
     pub uptime_secs: Option<u64>,
     pub restart_count: u32,
+    pub active_connections: u32,
+    /// Seconds since the last proxied connection open/close (or start).
+    pub last_activity_secs_ago: Option<u64>,
+    /// Process working set in bytes. Not exclusive physical RAM — do not sum.
+    pub working_set_bytes: Option<u64>,
+    /// Cumulative kernel + user CPU time for the process, in seconds.
+    pub cpu_time_secs: Option<f64>,
     pub last_error: Option<String>,
+}
+
+/// Cost of the rom daemon process itself (separate from services).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaemonStatus {
+    pub pid: u32,
+    pub uptime_secs: u64,
+    /// Daemon working set in bytes. Not exclusive physical RAM — do not sum with services.
+    pub working_set_bytes: Option<u64>,
+    pub cpu_time_secs: Option<f64>,
+}
+
+/// Full status snapshot returned by the daemon.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusSnapshot {
+    pub daemon: DaemonStatus,
+    pub services: Vec<ServiceStatus>,
 }
 
 struct Instance {
@@ -81,6 +106,7 @@ struct Slot {
     restart_count: u32,
     instance: Option<Instance>,
     active_connections: usize,
+    last_activity: Option<Instant>,
     /// Bumped to cancel a pending idle-stop task.
     idle_generation: u64,
 }
@@ -93,6 +119,7 @@ impl Slot {
             restart_count: 0,
             instance: None,
             active_connections: 0,
+            last_activity: None,
             idle_generation: 0,
         }
     }
@@ -104,6 +131,7 @@ pub struct ProcessManager {
     registry: Registry,
     log_dir: PathBuf,
     compile_cache_dir: PathBuf,
+    started_at: Instant,
     slots: Arc<Mutex<BTreeMap<String, Slot>>>,
     lifecycle: AsyncMutex<()>,
 }
@@ -120,6 +148,7 @@ impl ProcessManager {
             registry,
             log_dir,
             compile_cache_dir: state_dir.join("compile-cache"),
+            started_at: Instant::now(),
             slots: Arc::new(Mutex::new(slots)),
             lifecycle: AsyncMutex::new(()),
         }))
@@ -167,6 +196,7 @@ impl ProcessManager {
         let mut slots = lock(&self.slots);
         if let Some(slot) = slots.get_mut(name) {
             slot.active_connections += 1;
+            slot.last_activity = Some(Instant::now());
             slot.idle_generation = slot.idle_generation.wrapping_add(1);
         }
     }
@@ -179,6 +209,7 @@ impl ProcessManager {
                 return;
             };
             slot.active_connections = slot.active_connections.saturating_sub(1);
+            slot.last_activity = Some(Instant::now());
             slot.active_connections == 0 && slot.state == ServiceState::Running
         };
         if should_arm {
@@ -218,12 +249,33 @@ impl ProcessManager {
             .is_some_and(|slot| slot.state == ServiceState::Running)
     }
 
+    pub fn status_snapshot(&self) -> StatusSnapshot {
+        StatusSnapshot {
+            daemon: self.daemon_status(),
+            services: self.status(),
+        }
+    }
+
+    pub fn daemon_status(&self) -> DaemonStatus {
+        let metrics = metrics::current_process_metrics().ok();
+        DaemonStatus {
+            pid: std::process::id(),
+            uptime_secs: self.started_at.elapsed().as_secs(),
+            working_set_bytes: metrics.as_ref().map(|m| m.working_set_bytes),
+            cpu_time_secs: metrics.as_ref().map(|m| m.cpu_time.as_secs_f64()),
+        }
+    }
+
     pub fn status(&self) -> Vec<ServiceStatus> {
         let slots = lock(&self.slots);
         self.registry
             .services()
             .filter_map(|def| {
                 let slot = slots.get(&def.name)?;
+                let process = slot
+                    .instance
+                    .as_ref()
+                    .and_then(|instance| metrics::process_metrics(instance.pid).ok());
                 Some(ServiceStatus {
                     name: def.name.clone(),
                     state: slot.state,
@@ -235,6 +287,12 @@ impl ProcessManager {
                         .as_ref()
                         .map(|i| i.started_at.elapsed().as_secs()),
                     restart_count: slot.restart_count,
+                    active_connections: slot.active_connections as u32,
+                    last_activity_secs_ago: slot
+                        .last_activity
+                        .map(|at| at.elapsed().as_secs()),
+                    working_set_bytes: process.as_ref().map(|m| m.working_set_bytes),
+                    cpu_time_secs: process.as_ref().map(|m| m.cpu_time.as_secs_f64()),
                     last_error: slot.last_error.clone(),
                 })
             })
@@ -321,6 +379,7 @@ impl ProcessManager {
                 self.update(name, |slot| {
                     if slot.state == ServiceState::HealthChecking {
                         slot.state = ServiceState::Running;
+                        slot.last_activity = Some(Instant::now());
                     }
                 });
                 Ok(())

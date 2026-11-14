@@ -10,7 +10,7 @@ use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
 use tokio::time::sleep;
 
 use crate::error::RomError;
-use crate::process::ServiceStatus;
+use crate::process::{DaemonStatus, ServiceStatus};
 
 const ERROR_PIPE_BUSY: i32 = 231;
 
@@ -28,7 +28,10 @@ pub enum Request {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Response {
     Ok { changed: Vec<String> },
-    Status { services: Vec<ServiceStatus> },
+    Status {
+        daemon: DaemonStatus,
+        services: Vec<ServiceStatus>,
+    },
     Error { message: String },
 }
 

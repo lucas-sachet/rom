@@ -19,6 +19,8 @@ pub mod console;
 pub mod detach;
 pub mod gateway;
 pub mod ipc;
+#[cfg(windows)]
+pub mod metrics;
 pub mod process;
 pub mod registry;
 pub mod server;
