@@ -2,7 +2,7 @@
 
 **Runtime Orchestrator for Microservices.** A local runtime that starts Node.js microservices on demand, stops them when they are idle, and keeps development machines light.
 
-> Status: stage 7 is done (metrics). Next is Linux/macOS. Plan, decisions and the real monorepo notes are in [docs/roadmap.md](docs/roadmap.md).
+> Status: stage 8 is done (Linux/macOS). Plan, decisions and the real monorepo notes are in [docs/roadmap.md](docs/roadmap.md).
 
 ## Why
 
@@ -12,11 +12,11 @@ Running dozens of services with `nodemon` and `concurrently` means dozens of wat
 
 ## Requirements
 
-- Windows 10 or 11
+- Windows 10/11, Linux, or macOS
 - Rust 1.85+ (to build)
 - Node.js on `PATH` (to run Node services)
 
-Linux and macOS are not supported yet. The code uses Windows Job Objects and named pipes.
+On Windows the daemon uses Job Objects and named pipes. On Unix it uses process groups and a socket under `$XDG_RUNTIME_DIR` (or the system temp dir).
 
 ## Build
 
@@ -115,8 +115,8 @@ Notes:
 ## How it works
 
 - The config file is found by walking up from the current directory, so every command works from anywhere inside the project. Use `--config <path>` to override.
-- Each project has its own daemon, its own named pipe (`\\.\pipe\rom-<hash>`) and its own state in `.rom/` (logs, daemon log). Add `.rom/` to `.gitignore`.
-- Every service runs inside a Windows Job Object with its own hidden console. Stop sends `CTRL_BREAK` (`SIGBREAK` in Node), waits `shutdown_timeout`, then force-kills the job if needed. If the daemon dies, the Job Object closes and no service is left running.
+- Each project has its own daemon, its own IPC endpoint (`\\.\pipe\rom-<hash>` on Windows, `$XDG_RUNTIME_DIR/rom-<hash>.sock` on Unix) and its own state in `.rom/` (logs, daemon log). Add `.rom/` to `.gitignore`.
+- Every service runs in an owned process tree (Job Object on Windows, process group on Unix). Stop sends `CTRL_BREAK` / `SIGTERM`, waits `shutdown_timeout`, then force-kills the tree if needed. If the daemon dies, leftover services are reaped with the tree.
 - A service is `running` once its listen port accepts connections (and its `/health` returns 2xx, if configured). Clients always connect to the public port through the gateway.
 
 ## Development

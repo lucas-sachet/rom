@@ -14,12 +14,11 @@ use tokio::net::TcpStream;
 use tokio::process::Command;
 use tokio::sync::{Mutex as AsyncMutex, watch};
 use tokio::time::{sleep, timeout};
-use windows_sys::Win32::System::Threading::CREATE_NEW_CONSOLE;
 
 use crate::config::Mode;
-use crate::console::{hide_console_windows, send_ctrl_break};
+use crate::console::{hide_console_windows, send_graceful_stop};
 use crate::error::RomError;
-use crate::job::JobObject;
+use crate::job::ProcessTree;
 use crate::metrics;
 use crate::registry::{Registry, ServiceDef};
 
@@ -94,7 +93,7 @@ pub struct StatusSnapshot {
 struct Instance {
     pid: u32,
     listen_port: u16,
-    job: Arc<JobObject>,
+    tree: Arc<ProcessTree>,
     started_at: Instant,
     /// Becomes `true` once the child process has been reaped.
     exited: watch::Receiver<bool>,
@@ -420,19 +419,18 @@ impl ProcessManager {
                     slot.state = ServiceState::Stopping;
                     Some((
                         instance.pid,
-                        Arc::clone(&instance.job),
+                        Arc::clone(&instance.tree),
                         instance.exited.clone(),
                     ))
                 }
             }
         };
-        let Some((pid, job, exited)) = target else {
+        let Some((pid, tree, exited)) = target else {
             return Ok(());
         };
 
-        // Graceful path: CTRL_BREAK → Node SIGBREAK. Fall back to the Job Object
-        // if the process ignores the signal or has no console.
-        match send_ctrl_break(pid) {
+        // Graceful path: CTRL_BREAK (Windows) / SIGTERM (Unix). Fall back to force-kill.
+        match send_graceful_stop(pid) {
             Ok(()) => {
                 if timeout(
                     self.registry.shutdown_timeout,
@@ -445,19 +443,19 @@ impl ProcessManager {
                 }
                 tracing::warn!(
                     service = %name,
-                    "CTRL_BREAK ignored; terminating job object"
+                    "graceful stop ignored; force-killing process tree"
                 );
             }
             Err(error) => {
                 tracing::debug!(
                     service = %name,
                     %error,
-                    "CTRL_BREAK unavailable; terminating job object"
+                    "graceful stop unavailable; force-killing process tree"
                 );
             }
         }
 
-        job.terminate()?;
+        tree.terminate()?;
         self.await_exit(name, exited).await
     }
 
@@ -576,10 +574,18 @@ impl ProcessManager {
             .env("ROM_SERVICE", &def.name)
             .stdin(Stdio::null())
             .stdout(Stdio::from(log))
-            .stderr(Stdio::from(stderr))
+            .stderr(Stdio::from(stderr));
+        #[cfg(windows)]
+        {
             // Own hidden console so CTRL_BREAK can be delivered on stop.
             // CREATE_NEW_PROCESS_GROUP is ignored when combined with this flag.
-            .creation_flags(CREATE_NEW_CONSOLE);
+            command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NEW_CONSOLE);
+        }
+        #[cfg(unix)]
+        {
+            // New process group so SIGKILL can target the whole tree.
+            command.process_group(0);
+        }
         // Node 22.1+ reuses V8 bytecode across starts. Harmless on older Node, which ignores it.
         if is_node_command(&def.command) {
             let cache = self.compile_cache_dir.join(&def.name);
@@ -599,11 +605,20 @@ impl ProcessManager {
         hide_console_windows(pid);
 
         // NOTE: assignment happens right after spawn, so a grandchild created in that
-        // instant could escape the job. Node services do not do this during boot.
-        let job = JobObject::new()?;
-        let assigned = match child.raw_handle() {
-            Some(handle) => job.assign(handle),
-            None => Err(io::Error::other("process handle unavailable")),
+        // instant could escape the tree. Node services do not do this during boot.
+        let tree = ProcessTree::new()?;
+        let assigned = {
+            #[cfg(windows)]
+            {
+                match child.raw_handle() {
+                    Some(handle) => tree.assign(handle),
+                    None => Err(io::Error::other("process handle unavailable")),
+                }
+            }
+            #[cfg(unix)]
+            {
+                tree.assign_pgid(pid)
+            }
         };
         if let Err(source) = assigned {
             let _ = child.start_kill();
@@ -611,7 +626,7 @@ impl ProcessManager {
         }
 
         let (exited_tx, exited_rx) = watch::channel(false);
-        let job = Arc::new(job);
+        let tree = Arc::new(tree);
         let slots = Arc::clone(&self.slots);
         let service = def.name.clone();
         tokio::spawn(async move {
@@ -626,7 +641,7 @@ impl ProcessManager {
                     };
                     slot.last_error = (next != ServiceState::Sleeping).then(|| describe_exit(&status));
                     slot.state = next;
-                    // Dropping the last Arc<JobObject> closes the job and reaps any leftover descendants.
+                    // Dropping the last Arc<ProcessTree> reaps leftover descendants.
                     slot.instance = None;
                 }
             }
@@ -636,7 +651,7 @@ impl ProcessManager {
         Ok(Instance {
             pid,
             listen_port,
-            job,
+            tree,
             started_at: Instant::now(),
             exited: exited_rx,
         })

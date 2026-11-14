@@ -10,11 +10,13 @@ Idle HTTP keep-alive connections do not count. Node keeps them open by default, 
 
 ## Shutdown
 
-Each service is started with its own hidden console (`CREATE_NEW_CONSOLE`). Stop re-invokes a small helper (`rom __ctrl_break <pid>` / `rom-ctrl-break`) that attaches to that console and sends `CTRL_BREAK` (Node: `SIGBREAK`), then waits up to `shutdown_timeout` before `TerminateJobObject`. Attaching in-process would deliver the signal to the daemon itself. Closing the Job Object when the daemon exits still kills leftovers.
+On Windows each service is started with its own hidden console (`CREATE_NEW_CONSOLE`). Stop re-invokes a small helper (`rom __ctrl_break <pid>` / `rom-ctrl-break`) that attaches to that console and sends `CTRL_BREAK` (Node: `SIGBREAK`), then waits up to `shutdown_timeout` before `TerminateJobObject`. Attaching in-process would deliver the signal to the daemon itself. Closing the Job Object when the daemon exits still kills leftovers.
 
 `CREATE_NEW_PROCESS_GROUP` cannot be combined with `CREATE_NEW_CONSOLE` (Windows ignores the group flag), so the break is sent to every process on that console — normally just the service.
 
-There is no `rom` npm package. Services that already drain on `SIGTERM` / `SIGBREAK` / `SIGINT` work unchanged. On Linux and macOS the pair will be `SIGTERM` then `SIGKILL`.
+On Unix the service is started in a new process group. Stop sends `SIGTERM` to the process, then `SIGKILL` to the group after `shutdown_timeout`. Dropping the process-tree handle also SIGKILLs the group.
+
+There is no `rom` npm package. Services that already drain on `SIGTERM` / `SIGBREAK` / `SIGINT` work unchanged.
 
 ## Discovery
 
@@ -23,6 +25,10 @@ There is no `rom` npm package. Services that already drain on `SIGTERM` / `SIGBR
 ## Metrics
 
 Status reports working set and cumulative CPU time per service process, plus the same for the daemon as a separate line. Working set on Windows is not exclusive physical RAM (shared pages, overcommit), so values must never be summed and labelled as total RAM. Active proxied connections and seconds since last connection open/close (or start) are included so idle behaviour is visible without inventing a fake memory total.
+
+## Platforms
+
+Windows remains the primary target. Linux and macOS share the same gateway and yaml: services run in their own process group, IPC is a Unix domain socket under `$XDG_RUNTIME_DIR` (or the temp dir), and stop sends `SIGTERM` then force-kills the process group. The Windows path stays Job Object + named pipe + `CTRL_BREAK` via the helper.
 
 ## Watcher
 

@@ -17,7 +17,7 @@ O que o rom faz:
 
 O que o rom não é: Docker, Kubernetes, ou um runtime compartilhado de V8.
 
-Ambiente desta máquina: Windows nativo, sem distro Linux no WSL (só `docker-desktop`). Rust 1.97. Node 26.13. O primeiro alvo do open source é Windows. Linux e macOS ficam para depois; o código recusa compilar fora do Windows de propósito.
+Ambiente desta máquina: Windows nativo, sem distro Linux no WSL (só `docker-desktop`). Rust 1.97. Node 26.13. Windows foi o primeiro alvo; Linux e macOS usam process group + socket Unix + `SIGTERM`.
 
 ## O que já está pronto
 
@@ -66,6 +66,11 @@ Ambiente desta máquina: Windows nativo, sem distro Linux no WSL (só `docker-de
 - O custo do daemon (PID, uptime, working set, CPU) vem separado dos serviços.
 - Working set no Windows não é RAM exclusiva — o CLI avisa e o código nunca soma working sets como memória física.
 
+### Etapa 8 — Linux e macOS
+
+- Job Object → process group; pipe nomeado → socket em `$XDG_RUNTIME_DIR` (fallback `/tmp`); `CTRL_BREAK` → `SIGTERM` (depois `SIGKILL` no grupo).
+- Gateway TCP e `rom.yaml` iguais. Detach do daemon usa `setsid` no Unix.
+
 O push para `git@github.com:lucas-sachet/rom.git` pode falhar com `Permission denied (publickey)`. A identidade deste repositório é `Lucas Sachet <lucasachet@gmail.com>` (não usar o e-mail global da máquina).
 
 O `rom.yaml` do tex **não** está neste repositório. Está em `D:\TI\tex\dev\tex-backend-dev\rom.yaml` (não commitado lá). `rom check` passou: 38 serviços, profiles iguais aos scripts `start:*`. Três serviços ficaram de fora:
@@ -107,11 +112,9 @@ Cada etapa termina com teste automatizado e um ensaio manual. Não começar a pr
 
 ### Etapa 7 — Métricas — feita
 
+### Etapa 8 — Linux e macOS — feita
+
 Ver secção "O que já está pronto".
-
-### Etapa 8 — Linux e macOS
-
-Só depois do fluxo Windows estar estável. Trocar Job Object, pipe nomeado e `CTRL_BREAK` por process group, socket em `$XDG_RUNTIME_DIR` e `SIGTERM`. O gateway TCP e o yaml não mudam.
 
 ## Fora destas etapas
 

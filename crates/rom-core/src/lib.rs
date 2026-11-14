@@ -5,28 +5,21 @@
 //! - `process`: service lifecycle (spawn, readiness, stop).
 //! - `gateway`: TCP proxy from public ports to running processes.
 //! - `watcher`: restarts running services when their files change.
-//! - `ipc` and `server`: JSON lines over a Windows named pipe, one daemon per project.
-
-#[cfg(not(windows))]
-compile_error!("rom currently targets Windows only");
+//! - `ipc` and `server`: JSON lines over a named pipe (Windows) or Unix domain socket.
 
 pub mod config;
+pub mod console;
+pub mod detach;
 pub mod discover;
 pub mod error;
-#[cfg(windows)]
-pub mod console;
-#[cfg(windows)]
-pub mod detach;
 pub mod gateway;
 pub mod ipc;
-#[cfg(windows)]
 pub mod metrics;
 pub mod process;
 pub mod registry;
 pub mod server;
 pub mod watcher;
 
-#[cfg(windows)]
 mod job;
 
 pub use error::RomError;
