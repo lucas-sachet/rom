@@ -11,6 +11,7 @@
 compile_error!("rom currently targets Windows only");
 
 pub mod config;
+pub mod discover;
 pub mod error;
 #[cfg(windows)]
 pub mod console;

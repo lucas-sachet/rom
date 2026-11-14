@@ -2,7 +2,7 @@
 
 **Runtime Orchestrator for Microservices.** A local runtime that starts Node.js microservices on demand, stops them when they are idle, and keeps development machines light.
 
-> Status: stage 5 is done (graceful CTRL_BREAK stop). Next is service discovery. Plan, decisions and the real monorepo notes are in [docs/roadmap.md](docs/roadmap.md).
+> Status: stage 6 is done (service discovery). Next is metrics. Plan, decisions and the real monorepo notes are in [docs/roadmap.md](docs/roadmap.md).
 
 ## Why
 
@@ -103,6 +103,7 @@ Notes:
 | Command | What it does |
 |---|---|
 | `rom init` | Creates `rom.yaml` in the current directory |
+| `rom discover [--write] [--force]` | Scans the monorepo and suggests a `rom.yaml` (prints by default; `--write` saves, `--force` overwrites) |
 | `rom check` | Validates `rom.yaml` |
 | `rom start [SERVICES] [-p PROFILE] [--all]` | Starts services and their dependencies |
 | `rom stop [SERVICES] [-p PROFILE] [--all] [--force]` | Stops services. Refuses if running services depend on them, unless `--force` |
@@ -137,6 +138,7 @@ crates/rom-core/tests/gateway.rs     TCP gateway and on-demand start
 crates/rom-core/tests/idle.rs        idle stop and quiet keep-alives
 crates/rom-core/tests/watcher.rs     file watcher restarts
 crates/rom-core/tests/graceful.rs    CTRL_BREAK then Job Object fallback
+crates/rom-core/tests/discover.rs    monorepo scan → suggested yaml
 ```
 
 ## License

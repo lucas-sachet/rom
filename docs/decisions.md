@@ -16,6 +16,10 @@ Each service is started with its own hidden console (`CREATE_NEW_CONSOLE`). Stop
 
 There is no `rom` npm package. Services that already drain on `SIGTERM` / `SIGBREAK` / `SIGINT` work unchanged. On Linux and macOS the pair will be `SIGTERM` then `SIGKILL`.
 
+## Discovery
+
+`rom discover` only suggests a yaml. It never overwrites `rom.yaml` unless `--write --force` is passed. Dependencies are left empty — local package graphs are not turned into runtime start edges automatically. Each package directory with its own entrypoint stays its own service; similar code is never merged into one process. The checked-in / confirmed `rom.yaml` remains the source of truth for the registry.
+
 ## Watcher
 
 One `notify` watcher per project. Directories are registered non-recursively and ignored names (`node_modules`, `.git`, `dist`, …) are skipped while walking, so Windows never attaches a subtree watch under those trees. Sleeping services are not started by file changes. Presence of `.git/index.lock` pauses reloads until the lock is gone.

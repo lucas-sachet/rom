@@ -9,6 +9,7 @@ use clap::{Parser, Subcommand};
 use rom_core::config::{self, find_config};
 use rom_core::console;
 use rom_core::detach::spawn_detached;
+use rom_core::discover;
 use rom_core::gateway;
 use rom_core::ipc::{self, Request, Response, pipe_name};
 use rom_core::process::{ProcessManager, ServiceState, ServiceStatus, read_tail};
@@ -68,6 +69,18 @@ struct Cli {
 enum Cmd {
     /// Create a rom.yaml in the current directory.
     Init,
+    /// Scan the monorepo and suggest a rom.yaml (does not overwrite unless forced).
+    Discover {
+        /// Directory to scan. Defaults to the current directory.
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Write the suggestion to rom.yaml (fails if it already exists).
+        #[arg(long)]
+        write: bool,
+        /// Allow `--write` to replace an existing rom.yaml.
+        #[arg(long)]
+        force: bool,
+    },
     /// Validate rom.yaml without starting anything.
     Check,
     /// Start services; their dependencies start first.
@@ -166,6 +179,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Cmd::Init => init(),
+        Cmd::Discover { root, write, force } => discover_cmd(root, write, force),
         Cmd::Daemon { action } => {
             let project = Project::locate(cli.config)?;
             daemon(&project, action).await
@@ -191,9 +205,43 @@ fn init() -> Result<()> {
     Ok(())
 }
 
+fn discover_cmd(root: Option<PathBuf>, write: bool, force: bool) -> Result<()> {
+    let root = match root {
+        Some(path) => std::path::absolute(path)?,
+        None => std::env::current_dir()?,
+    };
+    let discovery = discover::scan(&root)?;
+    let yaml = discover::render_yaml(&discovery);
+
+    for skipped in &discovery.skipped {
+        eprintln!("skip: {skipped}");
+    }
+    eprintln!(
+        "discovered {} service(s) under {}",
+        discovery.services.len(),
+        root.display()
+    );
+
+    if !write {
+        print!("{yaml}");
+        return Ok(());
+    }
+
+    let path = root.join("rom.yaml");
+    if path.exists() && !force {
+        bail!(
+            "{} already exists; pass --force to overwrite, or omit --write to print the suggestion",
+            path.display()
+        );
+    }
+    fs::write(&path, yaml)?;
+    println!("wrote {}", path.display());
+    Ok(())
+}
+
 async fn run(project: &Project, command: Cmd) -> Result<()> {
     match command {
-        Cmd::Init | Cmd::Daemon { .. } => unreachable!("handled in main"),
+        Cmd::Init | Cmd::Discover { .. } | Cmd::Daemon { .. } => unreachable!("handled in main"),
         Cmd::Check => {
             let registry = project.registry()?;
             println!(

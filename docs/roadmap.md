@@ -53,7 +53,12 @@ Ambiente desta máquina: Windows nativo, sem distro Linux no WSL (só `docker-de
 ### Etapa 5 — Parada graciosa
 
 - Console oculto por serviço (`CREATE_NEW_CONSOLE`); stop envia `CTRL_BREAK` (`SIGBREAK` no Node), espera `shutdown_timeout`, e só então `TerminateJobObject`.
-- Testes em `graceful.rs`, `gateway.rs`, `idle.rs`, `watcher.rs` e lifecycle.
+
+### Etapa 6 — Descoberta
+
+- `rom discover` varre o monorepo (`package.json` + entrypoint + PORT) e sugere um yaml.
+- Não grava por cima de `rom.yaml` sem `--write` (e `--force` se já existir). Dependencies ficam vazias de propósito.
+- Não junta pacotes parecidos num único serviço. O registry/`rom.yaml` continua sendo a verdade.
 
 O push para `git@github.com:lucas-sachet/rom.git` pode falhar com `Permission denied (publickey)`. A identidade deste repositório é `Lucas Sachet <lucasachet@gmail.com>` (não usar o e-mail global da máquina).
 
@@ -92,11 +97,9 @@ Cada etapa termina com teste automatizado e um ensaio manual. Não começar a pr
 
 ### Etapa 5 — Parada com CTRL_BREAK — feita
 
+### Etapa 6 — Descoberta — feita
+
 Ver secção "O que já está pronto".
-
-### Etapa 6 — Descoberta
-
-Varredura do monorepo gera um yaml sugerido, que o desenvolvedor confirma. Não gravar por cima de um `rom.yaml` existente sem pedido. O registry continua sendo a verdade. Não inferir que código parecido é o mesmo processo.
 
 ### Etapa 7 — Métricas
 
