@@ -4,6 +4,7 @@
 //! - `registry`: validated view of the services; the source of truth at runtime.
 //! - `process`: service lifecycle (spawn, readiness, stop).
 //! - `gateway`: TCP proxy from public ports to running processes.
+//! - `watcher`: restarts running services when their files change.
 //! - `ipc` and `server`: JSON lines over a Windows named pipe, one daemon per project.
 
 #[cfg(not(windows))]
@@ -18,6 +19,7 @@ pub mod ipc;
 pub mod process;
 pub mod registry;
 pub mod server;
+pub mod watcher;
 
 #[cfg(windows)]
 mod job;

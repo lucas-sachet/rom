@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::config::{Config, Mode};
+use crate::config::{Config, Mode, WatchConfig};
 use crate::error::RomError;
 
 #[derive(Debug, Clone)]
@@ -28,10 +28,13 @@ pub struct ServiceDef {
 #[derive(Debug, Clone)]
 pub struct Registry {
     pub project: String,
+    /// Absolute project root (config dir + `project.root`).
+    pub root: PathBuf,
     pub startup_timeout: Duration,
     pub shutdown_timeout: Duration,
     pub idle_timeout: Duration,
     pub connection_idle: Duration,
+    pub watch: WatchConfig,
     services: BTreeMap<String, ServiceDef>,
     profiles: BTreeMap<String, Vec<String>>,
     order: Vec<String>,
@@ -123,10 +126,12 @@ impl Registry {
 
         Ok(Self {
             project: config.project.name,
+            root,
             startup_timeout: config.runtime.startup_timeout,
             shutdown_timeout: config.runtime.shutdown_timeout,
             idle_timeout: config.runtime.idle_timeout,
             connection_idle: config.runtime.connection_idle,
+            watch: config.watch,
             services,
             profiles,
             order,

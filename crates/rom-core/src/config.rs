@@ -17,6 +17,8 @@ pub struct Config {
     pub project: Project,
     #[serde(default)]
     pub runtime: Runtime,
+    #[serde(default)]
+    pub watch: WatchConfig,
     pub services: BTreeMap<String, ServiceConfig>,
     #[serde(default)]
     pub profiles: BTreeMap<String, Profile>,
@@ -53,6 +55,26 @@ impl Default for Runtime {
             shutdown_timeout: Duration::from_secs(30),
             idle_timeout: Duration::from_secs(30),
             connection_idle: Duration::from_secs(5),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct WatchConfig {
+    /// Coalesce bursts: minimum time from the first change before a restart.
+    #[serde(deserialize_with = "deserialize_duration")]
+    pub debounce: Duration,
+    /// Quiet window after the last change before a restart runs.
+    #[serde(deserialize_with = "deserialize_duration")]
+    pub settle: Duration,
+}
+
+impl Default for WatchConfig {
+    fn default() -> Self {
+        Self {
+            debounce: Duration::from_millis(300),
+            settle: Duration::from_millis(500),
         }
     }
 }

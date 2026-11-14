@@ -210,6 +210,12 @@ impl ProcessManager {
         self.stop(&all, true).await.map(drop)
     }
 
+    pub fn is_running(&self, name: &str) -> bool {
+        lock(&self.slots)
+            .get(name)
+            .is_some_and(|slot| slot.state == ServiceState::Running)
+    }
+
     pub fn status(&self) -> Vec<ServiceStatus> {
         let slots = lock(&self.slots);
         self.registry

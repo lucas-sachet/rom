@@ -57,7 +57,7 @@ impl Gateway {
             }));
         }
 
-        let _ = shutdown.wait_for(|stop| *stop).await;
+        wait_until_true(&mut shutdown).await;
         for task in tasks {
             task.abort();
         }
@@ -74,10 +74,7 @@ async fn accept_loop(
     loop {
         let accepted = tokio::select! {
             result = listener.accept() => result,
-            changed = shutdown.wait_for(|stop| *stop) => {
-                let _ = changed;
-                return;
-            }
+            () = wait_until_true(&mut shutdown) => return,
         };
         let (client, peer) = match accepted {
             Ok(pair) => pair,
@@ -93,6 +90,17 @@ async fn accept_loop(
                 tracing::warn!(service = %service, %peer, %error, "gateway proxy failed");
             }
         });
+    }
+}
+
+async fn wait_until_true(rx: &mut watch::Receiver<bool>) {
+    loop {
+        if *rx.borrow_and_update() {
+            return;
+        }
+        if rx.changed().await.is_err() {
+            return;
+        }
     }
 }
 

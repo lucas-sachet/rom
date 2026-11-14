@@ -23,10 +23,7 @@ pub async fn serve(
     loop {
         let connected = tokio::select! {
             result = server.connect() => Some(result),
-            changed = shutdown.wait_for(|stop| *stop) => {
-                let _ = changed;
-                None
-            }
+            () = wait_until_true(&mut shutdown) => None,
         };
         match connected {
             None => return Ok(()),
@@ -109,5 +106,16 @@ fn to_response(result: Result<Vec<String>, RomError>) -> Response {
         Err(error) => Response::Error {
             message: error.to_string(),
         },
+    }
+}
+
+async fn wait_until_true(rx: &mut watch::Receiver<bool>) {
+    loop {
+        if *rx.borrow_and_update() {
+            return;
+        }
+        if rx.changed().await.is_err() {
+            return;
+        }
     }
 }

@@ -43,7 +43,13 @@ Ambiente desta máquina: Windows nativo, sem distro Linux no WSL (só `docker-de
 - Conexão proxied com tráfego mantém o serviço ocupado; keep-alive sem bytes é fechado após `connection_idle`.
 - On-demand sem conexões para após `idle_timeout`. `mode: persistent` nunca para por ociosidade.
 - Idle stop não consulta dependentes: se o finance ainda precisa do user, a próxima chamada na porta pública sobe de novo.
-- Testes em `gateway.rs`, `idle.rs` e lifecycle.
+
+### Etapa 4 — Watcher
+
+- Um watcher (`notify`) por projeto; diretórios ignorados não são registrados (`node_modules`, `.git`, `dist`, `build`, `coverage`, `logs`, `.cache`, `.rom`).
+- `watch.debounce` (300ms) e `watch.settle` (500ms). Vários arquivos do mesmo serviço → um restart.
+- Serviço dormindo não sobe por arquivo. `.git/index.lock` pausa o reload.
+- Testes em `gateway.rs`, `idle.rs`, `watcher.rs` e lifecycle.
 
 O push para `git@github.com:lucas-sachet/rom.git` pode falhar com `Permission denied (publickey)`. A identidade deste repositório é `Lucas Sachet <lucasachet@gmail.com>` (não usar o e-mail global da máquina).
 
@@ -78,13 +84,9 @@ Cada etapa termina com teste automatizado e um ensaio manual. Não começar a pr
 
 ### Etapa 3 — Ociosidade — feita
 
+### Etapa 4 — Watcher no lugar do nodemon — feita
+
 Ver secção "O que já está pronto".
-
-### Etapa 4 — Watcher no lugar do nodemon
-
-Um watcher para o projeto (`notify`, mas sem registrar `node_modules` — no Windows o filtro também precisa acontecer antes de descer na árvore). Ignorar `node_modules`, `.git`, `dist`, `build`, `coverage`, `logs`, `.cache`, `.rom`.
-
-Debounce e janela de estabilização configuráveis (ponto de partida 300ms e 500ms). Vários arquivos do mesmo serviço geram um restart. Serviço dormindo não sobe por causa de arquivo alterado. `git` com `index.lock` pausa o reload.
 
 ### Etapa 5 — Parada com CTRL_BREAK
 

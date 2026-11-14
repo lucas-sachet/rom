@@ -12,6 +12,7 @@ use rom_core::gateway;
 use rom_core::ipc::{self, Request, Response, pipe_name};
 use rom_core::process::{ProcessManager, ServiceState, ServiceStatus, read_tail};
 use rom_core::registry::Registry;
+use rom_core::watcher;
 use rom_core::{RomError, server};
 use tokio::sync::watch;
 use tokio::time::sleep;
@@ -28,6 +29,10 @@ runtime:
   shutdown_timeout: 30s
   idle_timeout: 30s
   connection_idle: 5s
+
+watch:
+  debounce: 300ms
+  settle: 500ms
 
 # Services go under `services:`. Example:
 #
@@ -277,7 +282,13 @@ async fn run_daemon(project: &Project) -> Result<()> {
         .await
         .context("gateway failed to bind public ports")?;
     let gateway_manager = Arc::clone(&manager);
-    let gateway = tokio::spawn(async move { bound.serve(gateway_manager, shutdown_rx).await });
+    let gateway_shutdown = shutdown_rx.clone();
+    let gateway = tokio::spawn(async move { bound.serve(gateway_manager, gateway_shutdown).await });
+
+    let watcher_manager = Arc::clone(&manager);
+    let watcher_shutdown = shutdown_rx.clone();
+    let file_watcher =
+        tokio::spawn(async move { watcher::run(watcher_manager, watcher_shutdown).await });
 
     tracing::info!(pipe = %project.pipe, "daemon listening");
     let served = server::serve(&project.pipe, Arc::clone(&manager), shutdown_tx).await;
@@ -291,6 +302,12 @@ async fn run_daemon(project: &Project) -> Result<()> {
         Ok(Err(error)) => return Err(error).context("gateway failed"),
         Err(error) if error.is_cancelled() => {}
         Err(error) => return Err(error).context("gateway task failed"),
+    }
+    match file_watcher.await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return Err(error).context("watcher failed"),
+        Err(error) if error.is_cancelled() => {}
+        Err(error) => return Err(error).context("watcher task failed"),
     }
     Ok(())
 }

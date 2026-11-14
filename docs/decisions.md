@@ -16,6 +16,10 @@ There is no `SIGTERM` on Windows, so a Unix-style graceful stop is not available
 
 That path is deferred until the gateway tracks open connections. Until then there is nothing to drain, and an immediate kill matches what a dev restart needs. Services will not get a `rom` npm package; the ones that already drain on `SIGTERM` / `SIGBREAK` will work unchanged when graceful stop lands.
 
+## Watcher
+
+One `notify` watcher per project. Directories are registered non-recursively and ignored names (`node_modules`, `.git`, `dist`, …) are skipped while walking, so Windows never attaches a subtree watch under those trees. Sleeping services are not started by file changes. Presence of `.git/index.lock` pauses reloads until the lock is gone.
+
 ## Node
 
 The target runtime is Node.js 26 LTS. `rom` sets `NODE_COMPILE_CACHE` per service so repeat starts reuse V8 bytecode.

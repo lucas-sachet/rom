@@ -2,7 +2,7 @@
 
 **Runtime Orchestrator for Microservices.** A local runtime that starts Node.js microservices on demand, stops them when they are idle, and keeps development machines light.
 
-> Status: stage 3 is done (idle stop). Next is the file watcher. Plan, decisions and the real monorepo notes are in [docs/roadmap.md](docs/roadmap.md).
+> Status: stage 4 is done (file watcher). Next is graceful stop with CTRL_BREAK. Plan, decisions and the real monorepo notes are in [docs/roadmap.md](docs/roadmap.md).
 
 ## Why
 
@@ -57,6 +57,10 @@ runtime:
   idle_timeout: 30s             # stop on-demand services with no proxied connections
   connection_idle: 5s           # close keep-alive with no bytes either way
 
+watch:
+  debounce: 300ms               # min time from first change before restart
+  settle: 500ms                 # quiet window after last change before restart
+
 services:
   user-service:
     path: ./user-service
@@ -89,6 +93,7 @@ Notes:
 - Each service gets a free **listen** port as `PORT`, plus `ROM_SERVICE` and anything in `env:`. Node services also get `NODE_COMPILE_CACHE` (Node 22.1+, so 26 LTS), which keeps V8 bytecode between restarts.
 - A connection to a sleeping service starts it (and its yaml dependencies) once; concurrent clients share that start.
 - On-demand services stop after `idle_timeout` with no open proxied connections. Quiet keep-alives are closed after `connection_idle` and do not keep the service busy. `mode: persistent` never idle-stops.
+- One project watcher restarts **running** services when their files change (`node_modules`, `.git`, `dist`, … are not watched). Sleeping services stay asleep. A `.git/index.lock` pauses reloads.
 - Design notes for the gateway, idle detection and shutdown are in [docs/decisions.md](docs/decisions.md).
 - Service directories are used as-is. Each service keeps its own `node_modules`.
 - Validation reports duplicate ports, unknown dependencies, dependency cycles, missing directories and unknown profile members.
@@ -130,6 +135,7 @@ crates/rom-core/     config, registry, process manager, gateway, IPC, Job Object
 crates/rom-core/tests/lifecycle.rs   process lifecycle with real Node processes
 crates/rom-core/tests/gateway.rs     TCP gateway and on-demand start
 crates/rom-core/tests/idle.rs        idle stop and quiet keep-alives
+crates/rom-core/tests/watcher.rs     file watcher restarts
 ```
 
 ## License
