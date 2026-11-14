@@ -7,6 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[[bin]]
+name = "rom-ctrl-break"
+path = "src/bin/rom-ctrl-break.rs"
+
 [dependencies]
 notify = { workspace = true }
 serde = { workspace = true }

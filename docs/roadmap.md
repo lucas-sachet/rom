@@ -49,7 +49,11 @@ Ambiente desta máquina: Windows nativo, sem distro Linux no WSL (só `docker-de
 - Um watcher (`notify`) por projeto; diretórios ignorados não são registrados (`node_modules`, `.git`, `dist`, `build`, `coverage`, `logs`, `.cache`, `.rom`).
 - `watch.debounce` (300ms) e `watch.settle` (500ms). Vários arquivos do mesmo serviço → um restart.
 - Serviço dormindo não sobe por arquivo. `.git/index.lock` pausa o reload.
-- Testes em `gateway.rs`, `idle.rs`, `watcher.rs` e lifecycle.
+
+### Etapa 5 — Parada graciosa
+
+- Console oculto por serviço (`CREATE_NEW_CONSOLE`); stop envia `CTRL_BREAK` (`SIGBREAK` no Node), espera `shutdown_timeout`, e só então `TerminateJobObject`.
+- Testes em `graceful.rs`, `gateway.rs`, `idle.rs`, `watcher.rs` e lifecycle.
 
 O push para `git@github.com:lucas-sachet/rom.git` pode falhar com `Permission denied (publickey)`. A identidade deste repositório é `Lucas Sachet <lucasachet@gmail.com>` (não usar o e-mail global da máquina).
 
@@ -86,11 +90,9 @@ Cada etapa termina com teste automatizado e um ensaio manual. Não começar a pr
 
 ### Etapa 4 — Watcher no lugar do nodemon — feita
 
+### Etapa 5 — Parada com CTRL_BREAK — feita
+
 Ver secção "O que já está pronto".
-
-### Etapa 5 — Parada com CTRL_BREAK
-
-Quando o gateway souber quais conexões estão abertas: console oculto por serviço, `CTRL_BREAK` (`SIGBREAK` no Node), espera `shutdown_timeout`, e só então `TerminateJobObject`. No Linux/macOS, o par será `SIGTERM` e depois `SIGKILL`. Sem cliente npm.
 
 ### Etapa 6 — Descoberta
 

@@ -7,6 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use rom_core::config::{self, find_config};
+use rom_core::console;
 use rom_core::detach::spawn_detached;
 use rom_core::gateway;
 use rom_core::ipc::{self, Request, Response, pipe_name};
@@ -153,6 +154,10 @@ impl Project {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if console::maybe_run_as_helper() {
+        return Ok(());
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_env("ROM_LOG").unwrap_or_else(|_| EnvFilter::new("info")))
         .with_writer(std::io::stderr)

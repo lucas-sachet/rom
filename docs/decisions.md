@@ -10,11 +10,11 @@ Idle HTTP keep-alive connections do not count. Node keeps them open by default, 
 
 ## Shutdown
 
-Stop kills the process tree immediately through a Windows Job Object.
+Each service is started with its own hidden console (`CREATE_NEW_CONSOLE`). Stop re-invokes a small helper (`rom __ctrl_break <pid>` / `rom-ctrl-break`) that attaches to that console and sends `CTRL_BREAK` (Node: `SIGBREAK`), then waits up to `shutdown_timeout` before `TerminateJobObject`. Attaching in-process would deliver the signal to the daemon itself. Closing the Job Object when the daemon exits still kills leftovers.
 
-There is no `SIGTERM` on Windows, so a Unix-style graceful stop is not available. The Windows equivalent for Node is a hidden console plus `CTRL_BREAK`, which Node surfaces as `SIGBREAK`. On Linux and macOS the equivalent is `SIGTERM`, then `SIGKILL` after the grace period.
+`CREATE_NEW_PROCESS_GROUP` cannot be combined with `CREATE_NEW_CONSOLE` (Windows ignores the group flag), so the break is sent to every process on that console — normally just the service.
 
-That path is deferred until the gateway tracks open connections. Until then there is nothing to drain, and an immediate kill matches what a dev restart needs. Services will not get a `rom` npm package; the ones that already drain on `SIGTERM` / `SIGBREAK` will work unchanged when graceful stop lands.
+There is no `rom` npm package. Services that already drain on `SIGTERM` / `SIGBREAK` / `SIGINT` work unchanged. On Linux and macOS the pair will be `SIGTERM` then `SIGKILL`.
 
 ## Watcher
 

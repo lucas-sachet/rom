@@ -13,6 +13,8 @@ compile_error!("rom currently targets Windows only");
 pub mod config;
 pub mod error;
 #[cfg(windows)]
+pub mod console;
+#[cfg(windows)]
 pub mod detach;
 pub mod gateway;
 pub mod ipc;

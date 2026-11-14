@@ -2,7 +2,7 @@
 
 **Runtime Orchestrator for Microservices.** A local runtime that starts Node.js microservices on demand, stops them when they are idle, and keeps development machines light.
 
-> Status: stage 4 is done (file watcher). Next is graceful stop with CTRL_BREAK. Plan, decisions and the real monorepo notes are in [docs/roadmap.md](docs/roadmap.md).
+> Status: stage 5 is done (graceful CTRL_BREAK stop). Next is service discovery. Plan, decisions and the real monorepo notes are in [docs/roadmap.md](docs/roadmap.md).
 
 ## Why
 
@@ -115,7 +115,7 @@ Notes:
 
 - The config file is found by walking up from the current directory, so every command works from anywhere inside the project. Use `--config <path>` to override.
 - Each project has its own daemon, its own named pipe (`\\.\pipe\rom-<hash>`) and its own state in `.rom/` (logs, daemon log). Add `.rom/` to `.gitignore`.
-- Every service runs inside a Windows Job Object. Stopping a service kills its whole process tree. If the daemon dies, the Job Object closes and no service is left running.
+- Every service runs inside a Windows Job Object with its own hidden console. Stop sends `CTRL_BREAK` (`SIGBREAK` in Node), waits `shutdown_timeout`, then force-kills the job if needed. If the daemon dies, the Job Object closes and no service is left running.
 - A service is `running` once its listen port accepts connections (and its `/health` returns 2xx, if configured). Clients always connect to the public port through the gateway.
 
 ## Development
@@ -136,6 +136,7 @@ crates/rom-core/tests/lifecycle.rs   process lifecycle with real Node processes
 crates/rom-core/tests/gateway.rs     TCP gateway and on-demand start
 crates/rom-core/tests/idle.rs        idle stop and quiet keep-alives
 crates/rom-core/tests/watcher.rs     file watcher restarts
+crates/rom-core/tests/graceful.rs    CTRL_BREAK then Job Object fallback
 ```
 
 ## License

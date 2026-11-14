@@ -14,8 +14,10 @@ use tokio::net::TcpStream;
 use tokio::process::Command;
 use tokio::sync::{Mutex as AsyncMutex, watch};
 use tokio::time::{sleep, timeout};
+use windows_sys::Win32::System::Threading::CREATE_NEW_CONSOLE;
 
 use crate::config::Mode;
+use crate::console::{hide_console_windows, send_ctrl_break};
 use crate::error::RomError;
 use crate::job::JobObject;
 use crate::registry::{Registry, ServiceDef};
@@ -357,13 +359,45 @@ impl ProcessManager {
                 }
                 Some(instance) => {
                     slot.state = ServiceState::Stopping;
-                    Some((Arc::clone(&instance.job), instance.exited.clone()))
+                    Some((
+                        instance.pid,
+                        Arc::clone(&instance.job),
+                        instance.exited.clone(),
+                    ))
                 }
             }
         };
-        let Some((job, exited)) = target else {
+        let Some((pid, job, exited)) = target else {
             return Ok(());
         };
+
+        // Graceful path: CTRL_BREAK → Node SIGBREAK. Fall back to the Job Object
+        // if the process ignores the signal or has no console.
+        match send_ctrl_break(pid) {
+            Ok(()) => {
+                if timeout(
+                    self.registry.shutdown_timeout,
+                    wait_for_exit(exited.clone()),
+                )
+                .await
+                .is_ok()
+                {
+                    return Ok(());
+                }
+                tracing::warn!(
+                    service = %name,
+                    "CTRL_BREAK ignored; terminating job object"
+                );
+            }
+            Err(error) => {
+                tracing::debug!(
+                    service = %name,
+                    %error,
+                    "CTRL_BREAK unavailable; terminating job object"
+                );
+            }
+        }
+
         job.terminate()?;
         self.await_exit(name, exited).await
     }
@@ -420,13 +454,10 @@ impl ProcessManager {
         }
     }
 
-    async fn await_exit(&self, name: &str, mut exited: watch::Receiver<bool>) -> Result<(), RomError> {
-        let finished = timeout(
-            self.registry.shutdown_timeout,
-            exited.wait_for(|done| *done),
-        )
-        .await
-        .is_ok();
+    async fn await_exit(&self, name: &str, exited: watch::Receiver<bool>) -> Result<(), RomError> {
+        let finished = timeout(self.registry.shutdown_timeout, wait_for_exit(exited))
+            .await
+            .is_ok();
         if finished {
             Ok(())
         } else {
@@ -486,7 +517,10 @@ impl ProcessManager {
             .env("ROM_SERVICE", &def.name)
             .stdin(Stdio::null())
             .stdout(Stdio::from(log))
-            .stderr(Stdio::from(stderr));
+            .stderr(Stdio::from(stderr))
+            // Own hidden console so CTRL_BREAK can be delivered on stop.
+            // CREATE_NEW_PROCESS_GROUP is ignored when combined with this flag.
+            .creation_flags(CREATE_NEW_CONSOLE);
         // Node 22.1+ reuses V8 bytecode across starts. Harmless on older Node, which ignores it.
         if is_node_command(&def.command) {
             let cache = self.compile_cache_dir.join(&def.name);
@@ -503,6 +537,7 @@ impl ProcessManager {
         let Some(pid) = child.id() else {
             return Err(io::Error::other("child exited before it could be tracked").into());
         };
+        hide_console_windows(pid);
 
         // NOTE: assignment happens right after spawn, so a grandchild created in that
         // instant could escape the job. Node services do not do this during boot.
@@ -578,6 +613,10 @@ impl ProcessManager {
         });
         error
     }
+}
+
+async fn wait_for_exit(mut exited: watch::Receiver<bool>) {
+    let _ = exited.wait_for(|done| *done).await;
 }
 
 fn is_node_command(command: &str) -> bool {
