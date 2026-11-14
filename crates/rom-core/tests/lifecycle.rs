@@ -59,6 +59,15 @@ fn state(pm: &ProcessManager, name: &str) -> ServiceState {
         .state
 }
 
+fn listen_port(pm: &ProcessManager, name: &str) -> u16 {
+    pm.status()
+        .into_iter()
+        .find(|s| s.name == name)
+        .expect("service is registered")
+        .listen_port
+        .expect("service has a listen port")
+}
+
 async fn http_get_ok(port: u16) -> bool {
     let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)).await else {
         return false;
@@ -93,11 +102,12 @@ async fn starts_serves_and_stops_a_service() {
     let started = pm.start(&["api".to_owned()]).await.expect("start succeeds");
     assert_eq!(started, vec!["api"]);
     assert_eq!(state(&pm, "api"), ServiceState::Running);
-    assert!(http_get_ok(39101).await, "service answers HTTP");
+    let port = listen_port(&pm, "api");
+    assert!(http_get_ok(port).await, "service answers HTTP");
 
     pm.stop(&["api".to_owned()], false).await.expect("stop succeeds");
     assert_eq!(state(&pm, "api"), ServiceState::Sleeping);
-    assert!(port_is_closed(39101).await, "port is released after stop");
+    assert!(port_is_closed(port).await, "listen port is released after stop");
 }
 
 #[tokio::test]

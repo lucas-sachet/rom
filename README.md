@@ -2,7 +2,7 @@
 
 **Runtime Orchestrator for Microservices.** A local runtime that starts Node.js microservices on demand, stops them when they are idle, and keeps development machines light.
 
-> Status: stage 1 is done (Windows process manager, daemon and CLI). Next is the TCP gateway. Plan, decisions and the real monorepo notes are in [docs/roadmap.md](docs/roadmap.md).
+> Status: stage 2 is done (TCP gateway and on-demand start). Next is idle stop. Plan, decisions and the real monorepo notes are in [docs/roadmap.md](docs/roadmap.md).
 
 ## Why
 
@@ -82,7 +82,9 @@ profiles:
 Notes:
 
 - `command` is run without a shell. Use `node` and pass the script in `args`. `.cmd` shims such as `npm`, `npx` or `ts-node` cannot be launched directly. For TypeScript with `ts-node`, use `command: node` with `args: [-r, ts-node/register, server.ts]`.
-- Each service gets `PORT` and `ROM_SERVICE` in its environment, plus anything in `env:`. Node services also get `NODE_COMPILE_CACHE` (Node 22.1+, so 26 LTS), which keeps V8 bytecode between restarts.
+- The port in the yaml is the **public** port. The daemon's TCP gateway listens on `127.0.0.1` there and proxies to the process.
+- Each service gets a free **listen** port as `PORT`, plus `ROM_SERVICE` and anything in `env:`. Node services also get `NODE_COMPILE_CACHE` (Node 22.1+, so 26 LTS), which keeps V8 bytecode between restarts.
+- A connection to a sleeping service starts it (and its yaml dependencies) once; concurrent clients share that start. Idle stop is not implemented yet.
 - Design notes for the gateway, idle detection and shutdown are in [docs/decisions.md](docs/decisions.md).
 - Service directories are used as-is. Each service keeps its own `node_modules`.
 - Validation reports duplicate ports, unknown dependencies, dependency cycles, missing directories and unknown profile members.
@@ -105,7 +107,7 @@ Notes:
 - The config file is found by walking up from the current directory, so every command works from anywhere inside the project. Use `--config <path>` to override.
 - Each project has its own daemon, its own named pipe (`\\.\pipe\rom-<hash>`) and its own state in `.rom/` (logs, daemon log). Add `.rom/` to `.gitignore`.
 - Every service runs inside a Windows Job Object. Stopping a service kills its whole process tree. If the daemon dies, the Job Object closes and no service is left running.
-- A service is `running` once its port accepts connections (and its `/health` returns 2xx, if configured).
+- A service is `running` once its listen port accepts connections (and its `/health` returns 2xx, if configured). Clients always connect to the public port through the gateway.
 
 ## Development
 
@@ -120,8 +122,9 @@ Layout:
 
 ```text
 apps/rom/            CLI and daemon binary
-crates/rom-core/     config, registry, process manager, IPC, Job Object wrapper
-crates/rom-core/tests/lifecycle.rs   integration tests with real Node processes
+crates/rom-core/     config, registry, process manager, gateway, IPC, Job Object wrapper
+crates/rom-core/tests/lifecycle.rs   process lifecycle with real Node processes
+crates/rom-core/tests/gateway.rs     TCP gateway and on-demand start
 ```
 
 ## License

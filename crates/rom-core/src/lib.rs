@@ -3,6 +3,7 @@
 //! - `config`: parses `rom.yaml`.
 //! - `registry`: validated view of the services; the source of truth at runtime.
 //! - `process`: service lifecycle (spawn, readiness, stop).
+//! - `gateway`: TCP proxy from public ports to running processes.
 //! - `ipc` and `server`: JSON lines over a Windows named pipe, one daemon per project.
 
 #[cfg(not(windows))]
@@ -12,6 +13,7 @@ pub mod config;
 pub mod error;
 #[cfg(windows)]
 pub mod detach;
+pub mod gateway;
 pub mod ipc;
 pub mod process;
 pub mod registry;

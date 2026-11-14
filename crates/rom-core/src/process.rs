@@ -53,7 +53,10 @@ impl fmt::Display for ServiceState {
 pub struct ServiceStatus {
     pub name: String,
     pub state: ServiceState,
+    /// Public port from `rom.yaml` (the gateway listens here).
     pub port: u16,
+    /// Port the process is actually bound to, when running.
+    pub listen_port: Option<u16>,
     pub pid: Option<u32>,
     pub uptime_secs: Option<u64>,
     pub restart_count: u32,
@@ -62,6 +65,7 @@ pub struct ServiceStatus {
 
 struct Instance {
     pid: u32,
+    listen_port: u16,
     job: Arc<JobObject>,
     started_at: Instant,
     /// Becomes `true` once the child process has been reaped.
@@ -127,6 +131,22 @@ impl ProcessManager {
         self.start_locked(targets).await
     }
 
+    /// Ensures `name` (and its dependencies) are running, then returns the process listen port.
+    /// Concurrent callers share a single start: the lifecycle lock serializes them, and the
+    /// second caller finds the service already active.
+    pub async fn ensure_ready(&self, name: &str) -> Result<u16, RomError> {
+        let _guard = self.lifecycle.lock().await;
+        self.registry.get(name)?;
+        if let Some(port) = self.listen_port_of(name) {
+            return Ok(port);
+        }
+        self.start_locked(&[name.to_owned()]).await?;
+        self.listen_port_of(name).ok_or_else(|| RomError::StartFailed {
+            service: name.to_owned(),
+            reason: "service started but has no listen port".to_owned(),
+        })
+    }
+
     /// Stops the given services. Fails if running services depend on them, unless `force` is set,
     /// in which case those dependents are stopped first.
     pub async fn stop(&self, targets: &[String], force: bool) -> Result<Vec<String>, RomError> {
@@ -160,6 +180,7 @@ impl ProcessManager {
                     name: def.name.clone(),
                     state: slot.state,
                     port: def.port,
+                    listen_port: slot.instance.as_ref().map(|i| i.listen_port),
                     pid: slot.instance.as_ref().map(|i| i.pid),
                     uptime_secs: slot
                         .instance
@@ -223,11 +244,21 @@ impl ProcessManager {
             slot.last_error = None;
         });
 
-        if let Err(error) = ensure_port_free(&def) {
-            return Err(self.fail(name, error));
-        }
+        let listen_port = match allocate_listen_port() {
+            Ok(port) => port,
+            Err(error) => {
+                return Err(self.fail(
+                    name,
+                    RomError::PortInUse {
+                        service: name.to_owned(),
+                        port: 0,
+                        reason: error.to_string(),
+                    },
+                ));
+            }
+        };
 
-        let instance = match self.spawn(&def) {
+        let instance = match self.spawn(&def, listen_port) {
             Ok(instance) => instance,
             Err(error) => return Err(self.fail(name, error)),
         };
@@ -237,7 +268,7 @@ impl ProcessManager {
             slot.state = ServiceState::HealthChecking;
         });
 
-        match self.wait_ready(&def, exited).await {
+        match self.wait_ready(&def, listen_port, exited).await {
             Ok(()) => {
                 self.update(name, |slot| {
                     if slot.state == ServiceState::HealthChecking {
@@ -304,11 +335,12 @@ impl ProcessManager {
         }
     }
 
-    /// Polls until the TCP port accepts connections (and `/health` answers 2xx, when configured).
+    /// Polls until the listen port accepts connections (and `/health` answers 2xx, when configured).
     /// Returns the reason on failure.
     async fn wait_ready(
         &self,
         def: &ServiceDef,
+        listen_port: u16,
         mut exited: watch::Receiver<bool>,
     ) -> Result<(), String> {
         let deadline = Instant::now() + self.registry.startup_timeout;
@@ -316,13 +348,12 @@ impl ProcessManager {
             if *exited.borrow() {
                 return Err("process exited before becoming ready".to_owned());
             }
-            if probe(def).await {
+            if probe(def, listen_port).await {
                 return Ok(());
             }
             if Instant::now() >= deadline {
                 return Err(format!(
-                    "port {} did not become ready within {}s",
-                    def.port,
+                    "port {listen_port} did not become ready within {}s",
                     self.registry.startup_timeout.as_secs()
                 ));
             }
@@ -333,12 +364,18 @@ impl ProcessManager {
         }
     }
 
-    fn spawn(&self, def: &ServiceDef) -> Result<Instance, RomError> {
+    fn spawn(&self, def: &ServiceDef, listen_port: u16) -> Result<Instance, RomError> {
         let mut log = OpenOptions::new()
             .create(true)
             .append(true)
             .open(self.log_path(&def.name))?;
-        writeln!(log, "--- rom: starting `{}` at unix {} ---", def.name, unix_now())?;
+        writeln!(
+            log,
+            "--- rom: starting `{}` on listen port {listen_port} (public {}) at unix {} ---",
+            def.name,
+            def.port,
+            unix_now()
+        )?;
         let stderr = log.try_clone()?;
 
         let mut command = Command::new(&def.command);
@@ -346,7 +383,7 @@ impl ProcessManager {
             .args(&def.args)
             .current_dir(&def.dir)
             .envs(&def.env)
-            .env("PORT", def.port.to_string())
+            .env("PORT", listen_port.to_string())
             .env("ROM_SERVICE", &def.name)
             .stdin(Stdio::null())
             .stdout(Stdio::from(log))
@@ -405,6 +442,7 @@ impl ProcessManager {
 
         Ok(Instance {
             pid,
+            listen_port,
             job,
             started_at: Instant::now(),
             exited: exited_rx,
@@ -417,6 +455,14 @@ impl ProcessManager {
                 slot.state,
                 ServiceState::Starting | ServiceState::HealthChecking | ServiceState::Running
             )
+        })
+    }
+
+    fn listen_port_of(&self, name: &str) -> Option<u16> {
+        lock(&self.slots).get(name).and_then(|slot| {
+            (slot.state == ServiceState::Running)
+                .then(|| slot.instance.as_ref().map(|i| i.listen_port))
+                .flatten()
         })
     }
 
@@ -446,18 +492,22 @@ fn lock(slots: &Mutex<BTreeMap<String, Slot>>) -> MutexGuard<'_, BTreeMap<String
     slots.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-fn ensure_port_free(def: &ServiceDef) -> Result<(), RomError> {
-    TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, def.port)))
-        .map(drop)
-        .map_err(|error| RomError::PortInUse {
-            service: def.name.clone(),
-            port: def.port,
-            reason: error.to_string(),
-        })
+/// Picks a free localhost port for a service process.
+/// Avoids Windows' reserved range 50000–50059 on this machine.
+fn allocate_listen_port() -> io::Result<u16> {
+    for _ in 0..32 {
+        let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
+        let port = listener.local_addr()?.port();
+        drop(listener);
+        if !(50_000..=50_059).contains(&port) {
+            return Ok(port);
+        }
+    }
+    Err(io::Error::other("could not allocate a free listen port"))
 }
 
-async fn probe(def: &ServiceDef) -> bool {
-    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, def.port));
+async fn probe(def: &ServiceDef, listen_port: u16) -> bool {
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, listen_port));
     let Ok(Ok(mut stream)) = timeout(PROBE_TIMEOUT, TcpStream::connect(addr)).await else {
         return false;
     };

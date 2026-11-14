@@ -19,11 +19,9 @@ O que o rom não é: Docker, Kubernetes, ou um runtime compartilhado de V8.
 
 Ambiente desta máquina: Windows nativo, sem distro Linux no WSL (só `docker-desktop`). Rust 1.97. Node 26.13. O primeiro alvo do open source é Windows. Linux e macOS ficam para depois; o código recusa compilar fora do Windows de propósito.
 
-## O que já está pronto (etapa 1)
+## O que já está pronto
 
-Commit `663beb7` em `main`. O push para `git@github.com:lucas-sachet/rom.git` não saiu: `Permission denied (publickey)`. A identidade deste repositório é `Lucas Sachet <lucasachet@gmail.com>` (não usar o e-mail global da máquina).
-
-Entregue:
+### Etapa 1 — processo, daemon e CLI
 
 - Workspace Cargo: `apps/rom` (CLI e daemon) e `crates/rom-core`.
 - `rom.yaml` validado: porta duplicada, dependência inexistente, ciclo, diretório ausente, profile apontando para serviço desconhecido.
@@ -31,8 +29,17 @@ Entregue:
 - Job Object por serviço: parar mata a árvore; se o daemon morrer, os filhos morrem junto.
 - Comandos: `init`, `check`, `start`, `stop`, `restart`, `status`, `logs`, `daemon`.
 - `PORT` e `ROM_SERVICE` injetados. Serviço Node também recebe `NODE_COMPILE_CACHE` em `.rom/compile-cache/<serviço>`.
-- Pronto = a porta aceita TCP. Se `health` estiver no yaml, o `/health` precisa responder 2xx. A maioria dos serviços reais não tem health.
-- 14 testes (`cargo test --workspace`), incluindo processos Node de verdade. `cargo clippy --workspace --all-targets -- -D warnings` limpo.
+- Pronto = a porta de listen aceita TCP. Se `health` estiver no yaml, o `/health` precisa responder 2xx.
+
+### Etapa 2 — Gateway TCP e subida sob demanda
+
+- Gateway escuta `127.0.0.1` em cada porta pública do yaml e faz proxy TCP (HTTP, WebSocket e SSE passam).
+- O processo recebe uma porta interna livre em `PORT`; a porta do yaml é só a pública.
+- Conexão em serviço dormindo sobe ele e as dependências do yaml uma vez só (`ensure_ready`); clientes simultâneos compartilham a subida.
+- Ainda não desliga por ociosidade.
+- Testes em `crates/rom-core/tests/gateway.rs` + lifecycle. `cargo clippy --workspace --all-targets -- -D warnings` limpo.
+
+O push para `git@github.com:lucas-sachet/rom.git` pode falhar com `Permission denied (publickey)`. A identidade deste repositório é `Lucas Sachet <lucasachet@gmail.com>` (não usar o e-mail global da máquina).
 
 O `rom.yaml` do tex **não** está neste repositório. Está em `D:\TI\tex\dev\tex-backend-dev\rom.yaml` (não commitado lá). `rom check` passou: 38 serviços, profiles iguais aos scripts `start:*`. Três serviços ficaram de fora:
 
@@ -61,15 +68,9 @@ TypeScript sobe com `node -r ts-node/register` (maintenance usa `--import tsx`).
 
 Cada etapa termina com teste automatizado e um ensaio manual. Não começar a próxima com a anterior quebrada.
 
-### Etapa 2 — Gateway TCP e subida sob demanda
+### Etapa 2 — Gateway TCP e subida sob demanda — feita
 
-O gateway escuta as portas públicas do yaml (`127.0.0.1` apenas). O serviço sobe numa porta interna livre, recebendo essa porta em `PORT`.
-
-Fluxo: conexão na porta pública identifica o serviço; se estiver dormindo, sobe uma vez só (vários clientes simultâneos compartilham a mesma subida); espera a porta interna aceitar TCP; copia bytes nos dois sentidos. WebSocket e SSE passam sem código extra. Sem HTTP, sem gRPC como caso separado.
-
-Ainda não desliga por ociosidade. Serviço dormindo continua dormindo até chegar conexão ou `rom start`.
-
-Critério: três serviços de teste, todos dormindo; uma conexão no financeiro sobe o user e depois o financeiro; a conexão original é atendida; dez conexões juntas criam um processo só.
+Ver secção "O que já está pronto".
 
 ### Etapa 3 — Ociosidade
 
@@ -113,11 +114,12 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-Ensaio no monorepo real, sem gateway (os serviços escutam a porta pública direto):
+Ensaio no monorepo real (o daemon sobe o gateway; clientes usam a porta pública do yaml):
 
 ```powershell
 cd D:\TI\tex\dev\tex-backend-dev
-rom start --profile financial
+rom daemon start
+# com tudo dormindo, um curl na porta do financial deve subir user + financial
 rom status
 rom stop --all
 rom daemon stop

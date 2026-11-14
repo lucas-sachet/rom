@@ -2,11 +2,11 @@
 
 ## Gateway and idle time
 
-The gateway is a TCP proxy. A service stays busy while any proxied connection is open, which covers HTTP requests, Server-Sent Events and WebSockets.
+The gateway is a TCP proxy on `127.0.0.1`. Each yaml `port` is public; the process listens on an ephemeral port passed as `PORT`. The gateway starts a sleeping service (and its declared dependencies) on first connection; concurrent clients share one start via `ensure_ready`.
 
-Idle HTTP keep-alive connections do not count. Node keeps them open by default, so treating them as activity would mean a service never goes idle. The gateway closes a proxied connection after a configurable period with no bytes in either direction (initial value: 5s) and only then starts the idle timer.
+A service stays busy while any proxied connection is open, which covers HTTP requests, Server-Sent Events and WebSockets. That busy/idle accounting is stage 3.
 
-Not built yet. The process manager starts and stops services only when asked.
+Idle HTTP keep-alive connections do not count. Node keeps them open by default, so treating them as activity would mean a service never goes idle. The gateway will close a proxied connection after a configurable period with no bytes in either direction (initial value: 5s) and only then start the idle timer.
 
 ## Shutdown
 

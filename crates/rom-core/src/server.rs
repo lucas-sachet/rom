@@ -5,20 +5,28 @@ use std::sync::Arc;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
-use tokio::sync::Notify;
+use tokio::sync::watch;
 
 use crate::error::RomError;
 use crate::ipc::{Request, Response};
 use crate::process::ProcessManager;
 
-/// Serves requests on `pipe` until `shutdown` is notified.
+/// Serves requests on `pipe` until `shutdown` becomes `true`.
 /// Fails if another daemon already owns the pipe.
-pub async fn serve(pipe: &str, manager: Arc<ProcessManager>, shutdown: Arc<Notify>) -> io::Result<()> {
+pub async fn serve(
+    pipe: &str,
+    manager: Arc<ProcessManager>,
+    shutdown_tx: watch::Sender<bool>,
+) -> io::Result<()> {
+    let mut shutdown = shutdown_tx.subscribe();
     let mut server = ServerOptions::new().first_pipe_instance(true).create(pipe)?;
     loop {
         let connected = tokio::select! {
             result = server.connect() => Some(result),
-            () = shutdown.notified() => None,
+            changed = shutdown.wait_for(|stop| *stop) => {
+                let _ = changed;
+                None
+            }
         };
         match connected {
             None => return Ok(()),
@@ -28,16 +36,20 @@ pub async fn serve(pipe: &str, manager: Arc<ProcessManager>, shutdown: Arc<Notif
         let client = server;
         server = ServerOptions::new().create(pipe)?;
         let manager = Arc::clone(&manager);
-        let shutdown = Arc::clone(&shutdown);
+        let shutdown_tx = shutdown_tx.clone();
         tokio::spawn(async move {
-            if let Err(error) = handle(client, &manager, &shutdown).await {
+            if let Err(error) = handle(client, &manager, &shutdown_tx).await {
                 tracing::warn!(%error, "IPC request failed");
             }
         });
     }
 }
 
-async fn handle(pipe: NamedPipeServer, manager: &ProcessManager, shutdown: &Notify) -> Result<(), RomError> {
+async fn handle(
+    pipe: NamedPipeServer,
+    manager: &ProcessManager,
+    shutdown_tx: &watch::Sender<bool>,
+) -> Result<(), RomError> {
     let (reader, mut writer) = tokio::io::split(pipe);
     let mut lines = BufReader::new(reader).lines();
     let Some(line) = lines.next_line().await? else {
@@ -59,9 +71,12 @@ async fn handle(pipe: NamedPipeServer, manager: &ProcessManager, shutdown: &Noti
     writer.write_all(payload.as_bytes()).await?;
     writer.flush().await?;
 
-    // Notify only after the reply is written, so the client sees the answer.
+    // Stop the gateway before killing services, so a late accept cannot start them again.
     if stop_daemon {
-        shutdown.notify_one();
+        let _ = shutdown_tx.send(true);
+        if let Err(error) = manager.shutdown().await {
+            tracing::error!(%error, "failed to stop every service during daemon shutdown");
+        }
     }
     Ok(())
 }
@@ -83,7 +98,8 @@ async fn dispatch(request: Request, manager: &ProcessManager) -> (Response, bool
                 .map(|()| vec![service.clone()]);
             (to_response(result), false)
         }
-        Request::Shutdown => (to_response(manager.shutdown().await.map(|()| Vec::new())), true),
+        // Services are stopped after the gateway is signalled, in `handle`.
+        Request::Shutdown => (Response::Ok { changed: Vec::new() }, true),
     }
 }
 

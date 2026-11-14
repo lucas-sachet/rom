@@ -8,11 +8,12 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use rom_core::config::{self, find_config};
 use rom_core::detach::spawn_detached;
+use rom_core::gateway;
 use rom_core::ipc::{self, Request, Response, pipe_name};
 use rom_core::process::{ProcessManager, ServiceState, ServiceStatus, read_tail};
 use rom_core::registry::Registry;
 use rom_core::{RomError, server};
-use tokio::sync::Notify;
+use tokio::sync::watch;
 use tokio::time::sleep;
 use tracing_subscriber::EnvFilter;
 
@@ -260,22 +261,34 @@ async fn daemon(project: &Project, action: DaemonAction) -> Result<()> {
 async fn run_daemon(project: &Project) -> Result<()> {
     let registry = project.registry()?;
     let manager = Arc::new(ProcessManager::new(registry, &project.state_dir)?);
-    let shutdown = Arc::new(Notify::new());
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    let ctrl_c_shutdown = Arc::clone(&shutdown);
+    let ctrl_c_tx = shutdown_tx.clone();
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
-            ctrl_c_shutdown.notify_one();
+            let _ = ctrl_c_tx.send(true);
         }
     });
 
+    let bound = gateway::Gateway::bind(&manager)
+        .await
+        .context("gateway failed to bind public ports")?;
+    let gateway_manager = Arc::clone(&manager);
+    let gateway = tokio::spawn(async move { bound.serve(gateway_manager, shutdown_rx).await });
+
     tracing::info!(pipe = %project.pipe, "daemon listening");
-    let served = server::serve(&project.pipe, Arc::clone(&manager), Arc::clone(&shutdown)).await;
+    let served = server::serve(&project.pipe, Arc::clone(&manager), shutdown_tx).await;
     tracing::info!("stopping services");
     if let Err(error) = manager.shutdown().await {
         tracing::error!(%error, "failed to stop every service cleanly");
     }
     served.with_context(|| format!("could not listen on {} (is another daemon running?)", project.pipe))?;
+    match gateway.await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return Err(error).context("gateway failed"),
+        Err(error) if error.is_cancelled() => {}
+        Err(error) => return Err(error).context("gateway task failed"),
+    }
     Ok(())
 }
 
@@ -337,6 +350,7 @@ async fn status(project: &Project) -> Result<()> {
                 name: def.name.clone(),
                 state: ServiceState::Sleeping,
                 port: def.port,
+                listen_port: None,
                 pid: None,
                 uptime_secs: None,
                 restart_count: 0,

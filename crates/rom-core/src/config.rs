@@ -57,7 +57,7 @@ pub struct ServiceConfig {
     #[serde(default)]
     pub args: Vec<String>,
     pub port: u16,
-    /// Accepted for forward compatibility; the Phase 1 runtime only starts services on request.
+    /// Accepted for forward compatibility; idle stop (stage 3) will honour `persistent`.
     #[serde(default)]
     pub mode: Mode,
     #[serde(default)]
