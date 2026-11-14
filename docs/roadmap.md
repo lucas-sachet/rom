@@ -52,7 +52,8 @@ Ambiente desta máquina: Windows nativo, sem distro Linux no WSL (só `docker-de
 
 ### Etapa 5 — Parada graciosa
 
-- Console oculto por serviço (`CREATE_NEW_CONSOLE`); stop envia `CTRL_BREAK` (`SIGBREAK` no Node), espera `shutdown_timeout`, e só então `TerminateJobObject`.
+- Console oculto por serviço (`CREATE_NEW_CONSOLE` + `SW_HIDE`); stop envia `CTRL_BREAK` (`SIGBREAK` no Node), espera `shutdown_timeout`, e só então `TerminateJobObject`.
+- `rom up` mantém o daemon no terminal atual e faz stream dos logs; `rom start` continua no modo daemon em background.
 
 ### Etapa 6 — Descoberta
 

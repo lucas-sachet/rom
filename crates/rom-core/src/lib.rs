@@ -21,5 +21,7 @@ pub mod server;
 pub mod watcher;
 
 mod job;
+#[cfg(windows)]
+mod win_spawn;
 
 pub use error::RomError;

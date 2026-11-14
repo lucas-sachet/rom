@@ -14,14 +14,6 @@ pub fn send_graceful_stop(pid: u32) -> io::Result<()> {
     }
 }
 
-/// Best-effort hide of console windows owned by `pid` (Windows only; no-op elsewhere).
-pub fn hide_console_windows(pid: u32) {
-    #[cfg(windows)]
-    windows::hide_console_windows(pid);
-    #[cfg(unix)]
-    let _ = pid;
-}
-
 /// If this process was launched as a Windows ctrl-break helper, deliver and exit.
 /// Always returns `false` on Unix.
 pub fn maybe_run_as_helper() -> bool {
@@ -47,12 +39,9 @@ mod windows {
     use std::thread;
     use std::time::Duration;
 
-    use windows_sys::Win32::Foundation::{HWND, TRUE};
+    use windows_sys::Win32::Foundation::TRUE;
     use windows_sys::Win32::System::Console::{
         AttachConsole, CTRL_BREAK_EVENT, FreeConsole, GenerateConsoleCtrlEvent, SetConsoleCtrlHandler,
-    };
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowThreadProcessId, SW_HIDE, ShowWindow,
     };
 
     const STATUS_CONTROL_C_EXIT: i32 = -1073741510; // 0xC000013A as i32
@@ -92,16 +81,21 @@ mod windows {
     }
 
     pub fn send_ctrl_break(pid: u32) -> io::Result<()> {
+        use std::os::windows::process::CommandExt;
+
         let (exe, prefix) = ctrl_break_command()?;
         let mut command = Command::new(&exe);
         for arg in &prefix {
             command.arg(arg);
         }
+        // Avoid a visible console flash from the helper itself.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let status = command
             .arg(pid.to_string())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
             .status()?;
         if status.success() || status.code() == Some(STATUS_CONTROL_C_EXIT) {
             return Ok(());
@@ -174,24 +168,6 @@ mod windows {
         }
     }
 
-    pub fn hide_console_windows(pid: u32) {
-        let mut target = pid;
-        unsafe {
-            let _ = EnumWindows(Some(hide_if_pid), &raw mut target as *mut _ as isize);
-        }
-    }
-
-    unsafe extern "system" fn hide_if_pid(hwnd: HWND, lparam: isize) -> i32 {
-        let target = unsafe { *(lparam as *mut u32) };
-        let mut window_pid = 0u32;
-        unsafe {
-            GetWindowThreadProcessId(hwnd, &raw mut window_pid);
-            if window_pid == target {
-                ShowWindow(hwnd, SW_HIDE);
-            }
-        }
-        TRUE
-    }
 }
 
 #[cfg(unix)]

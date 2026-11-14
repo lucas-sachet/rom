@@ -84,7 +84,16 @@ enum Cmd {
     },
     /// Validate rom.yaml without starting anything.
     Check,
-    /// Start services; their dependencies start first.
+    /// Run the daemon in this terminal, stream logs, and optionally start services.
+    /// Ctrl+C stops everything. Prefer this for day-to-day work.
+    Up {
+        services: Vec<String>,
+        #[arg(short, long = "profile")]
+        profiles: Vec<String>,
+        #[arg(long)]
+        all: bool,
+    },
+    /// Start services via a background daemon (returns immediately; logs go to `.rom/logs`).
     Start {
         services: Vec<String>,
         #[arg(short, long = "profile")]
@@ -185,6 +194,14 @@ async fn main() -> Result<()> {
             let project = Project::locate(cli.config)?;
             daemon(&project, action).await
         }
+        Cmd::Up {
+            services,
+            profiles,
+            all,
+        } => {
+            let project = Project::locate(cli.config)?;
+            up(&project, services, profiles, all).await
+        }
         command => {
             let project = Project::locate(cli.config)?;
             run(&project, command).await
@@ -240,9 +257,137 @@ fn discover_cmd(root: Option<PathBuf>, write: bool, force: bool) -> Result<()> {
     Ok(())
 }
 
+async fn up(
+    project: &Project,
+    services: Vec<String>,
+    profiles: Vec<String>,
+    all: bool,
+) -> Result<()> {
+    if is_running(project).await {
+        bail!(
+            "a background daemon is already running for this project; stop it with `rom daemon stop` then retry `rom up`"
+        );
+    }
+    let registry = project.registry()?;
+    let names = if services.is_empty() && profiles.is_empty() && !all {
+        Vec::new()
+    } else {
+        select(&registry, services, &profiles, all)?
+    };
+
+    fs::create_dir_all(project.state_dir.join("logs"))?;
+    println!(
+        "rom up — logs stream here; Ctrl+C stops the daemon and every service ({})",
+        project.config_dir.display()
+    );
+
+    let log_dir = project.state_dir.join("logs");
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let tail_shutdown = shutdown_rx.clone();
+    let tail = tokio::spawn(async move { follow_log_dir(log_dir, tail_shutdown).await });
+
+    let start_names = names.clone();
+    let start_pipe = project.pipe.clone();
+    let starter = tokio::spawn(async move {
+        // Wait until the in-process daemon accepts IPC.
+        for _ in 0..100 {
+            sleep(Duration::from_millis(50)).await;
+            if ipc::request(&start_pipe, &Request::Status).await.is_ok() {
+                break;
+            }
+        }
+        if start_names.is_empty() {
+            println!("daemon ready (no services selected — connect to a public port or `rom start` from another terminal)");
+            return Ok::<(), anyhow::Error>(());
+        }
+        match ipc::request(
+            &start_pipe,
+            &Request::Start {
+                services: start_names.clone(),
+            },
+        )
+        .await?
+        {
+            Response::Ok { changed } => {
+                if changed.is_empty() {
+                    println!("already running");
+                } else {
+                    println!("started: {}", changed.join(", "));
+                }
+                Ok(())
+            }
+            Response::Error { message } => bail!(message),
+            Response::Status { .. } => bail!("daemon sent an unexpected response"),
+        }
+    });
+
+    let result = run_daemon_with_shutdown(project, shutdown_tx).await;
+    let _ = starter.await;
+    let _ = tail.await;
+    result
+}
+
+async fn follow_log_dir(log_dir: PathBuf, mut shutdown: watch::Receiver<bool>) {
+    use std::collections::HashMap;
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut offsets: HashMap<PathBuf, u64> = HashMap::new();
+    loop {
+        if *shutdown.borrow_and_update() {
+            return;
+        }
+        if let Ok(entries) = fs::read_dir(&log_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("log") {
+                    continue;
+                }
+                let name = path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "service".to_owned());
+                let Ok(mut file) = File::open(&path) else {
+                    continue;
+                };
+                let Ok(len) = file.seek(SeekFrom::End(0)) else {
+                    continue;
+                };
+                let pos = offsets.entry(path.clone()).or_insert(len);
+                if len < *pos {
+                    *pos = 0;
+                }
+                if len == *pos {
+                    continue;
+                }
+                if file.seek(SeekFrom::Start(*pos)).is_err() {
+                    continue;
+                }
+                let mut chunk = String::new();
+                if file.read_to_string(&mut chunk).is_err() {
+                    continue;
+                }
+                *pos = len;
+                for line in chunk.lines() {
+                    println!("[{name}] {line}");
+                }
+            }
+        }
+        tokio::select! {
+            () = sleep(Duration::from_millis(100)) => {}
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    return;
+                }
+            }
+        }
+    }
+}
+
 async fn run(project: &Project, command: Cmd) -> Result<()> {
     match command {
-        Cmd::Init | Cmd::Discover { .. } | Cmd::Daemon { .. } => unreachable!("handled in main"),
+        Cmd::Init | Cmd::Discover { .. } | Cmd::Daemon { .. } | Cmd::Up { .. } => {
+            unreachable!("handled in main")
+        }
         Cmd::Check => {
             let registry = project.registry()?;
             println!(
@@ -321,9 +466,14 @@ async fn daemon(project: &Project, action: DaemonAction) -> Result<()> {
 }
 
 async fn run_daemon(project: &Project) -> Result<()> {
+    let (shutdown_tx, _shutdown_rx) = watch::channel(false);
+    run_daemon_with_shutdown(project, shutdown_tx).await
+}
+
+async fn run_daemon_with_shutdown(project: &Project, shutdown_tx: watch::Sender<bool>) -> Result<()> {
     let registry = project.registry()?;
     let manager = ProcessManager::new(registry, &project.state_dir)?;
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let shutdown_rx = shutdown_tx.subscribe();
 
     let ctrl_c_tx = shutdown_tx.clone();
     tokio::spawn(async move {

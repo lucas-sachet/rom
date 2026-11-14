@@ -4,19 +4,18 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
-use std::process::{ExitStatus, Stdio};
+use std::process::ExitStatus;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::process::Command;
 use tokio::sync::{Mutex as AsyncMutex, watch};
 use tokio::time::{sleep, timeout};
 
 use crate::config::Mode;
-use crate::console::{hide_console_windows, send_graceful_stop};
+use crate::console::send_graceful_stop;
 use crate::error::RomError;
 use crate::job::ProcessTree;
 use crate::metrics;
@@ -552,85 +551,40 @@ impl ProcessManager {
     }
 
     fn spawn(&self, def: &ServiceDef, listen_port: u16) -> Result<Instance, RomError> {
-        let mut log = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.log_path(&def.name))?;
-        writeln!(
-            log,
-            "--- rom: starting `{}` on listen port {listen_port} (public {}) at unix {} ---",
-            def.name,
-            def.port,
-            unix_now()
-        )?;
-        let stderr = log.try_clone()?;
+        let log_path = self.log_path(&def.name);
+        {
+            let mut log = OpenOptions::new().create(true).append(true).open(&log_path)?;
+            writeln!(
+                log,
+                "--- rom: starting `{}` on listen port {listen_port} (public {}) at unix {} ---",
+                def.name,
+                def.port,
+                unix_now()
+            )?;
+        }
 
-        let mut command = Command::new(&def.command);
-        command
-            .args(&def.args)
-            .current_dir(&def.dir)
-            .envs(&def.env)
-            .env("PORT", listen_port.to_string())
-            .env("ROM_SERVICE", &def.name)
-            .stdin(Stdio::null())
-            .stdout(Stdio::from(log))
-            .stderr(Stdio::from(stderr));
-        #[cfg(windows)]
-        {
-            // Own hidden console so CTRL_BREAK can be delivered on stop.
-            // CREATE_NEW_PROCESS_GROUP is ignored when combined with this flag.
-            command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NEW_CONSOLE);
-        }
-        #[cfg(unix)]
-        {
-            // New process group so SIGKILL can target the whole tree.
-            command.process_group(0);
-        }
+        let mut env = def.env.clone();
+        env.insert("PORT".to_owned(), listen_port.to_string());
+        env.insert("ROM_SERVICE".to_owned(), def.name.clone());
         // Node 22.1+ reuses V8 bytecode across starts. Harmless on older Node, which ignores it.
         if is_node_command(&def.command) {
             let cache = self.compile_cache_dir.join(&def.name);
             fs::create_dir_all(&cache)?;
-            command.env("NODE_COMPILE_CACHE", &cache);
+            env.insert(
+                "NODE_COMPILE_CACHE".to_owned(),
+                cache.to_string_lossy().into_owned(),
+            );
         }
-        let mut child = command.spawn()
-            .map_err(|source| RomError::Spawn {
-                service: def.name.clone(),
-                command: def.command.clone(),
-                source,
-            })?;
 
-        let Some(pid) = child.id() else {
-            return Err(io::Error::other("child exited before it could be tracked").into());
-        };
-        hide_console_windows(pid);
-
-        // NOTE: assignment happens right after spawn, so a grandchild created in that
-        // instant could escape the tree. Node services do not do this during boot.
         let tree = ProcessTree::new()?;
-        let assigned = {
-            #[cfg(windows)]
-            {
-                match child.raw_handle() {
-                    Some(handle) => tree.assign(handle),
-                    None => Err(io::Error::other("process handle unavailable")),
-                }
-            }
-            #[cfg(unix)]
-            {
-                tree.assign_pgid(pid)
-            }
-        };
-        if let Err(source) = assigned {
-            let _ = child.start_kill();
-            return Err(source.into());
-        }
+        let (pid, wait_exit) = self.spawn_os(def, &log_path, &env, &tree)?;
 
         let (exited_tx, exited_rx) = watch::channel(false);
         let tree = Arc::new(tree);
         let slots = Arc::clone(&self.slots);
         let service = def.name.clone();
         tokio::spawn(async move {
-            let status = child.wait().await;
+            let status = wait_exit.await;
             {
                 let mut guard = lock(&slots);
                 if let Some(slot) = guard.get_mut(&service) {
@@ -655,6 +609,68 @@ impl ProcessManager {
             started_at: Instant::now(),
             exited: exited_rx,
         })
+    }
+
+    #[cfg(windows)]
+    fn spawn_os(
+        &self,
+        def: &ServiceDef,
+        log_path: &Path,
+        env: &std::collections::BTreeMap<String, String>,
+        tree: &ProcessTree,
+    ) -> Result<(u32, ExitFuture), RomError> {
+        let child = crate::win_spawn::spawn_hidden(&def.command, &def.args, &def.dir, log_path, env)
+            .map_err(|source| RomError::Spawn {
+                service: def.name.clone(),
+                command: def.command.clone(),
+                source,
+            })?;
+        let pid = child.id();
+        // NOTE: assignment happens right after spawn, so a grandchild created in that
+        // instant could escape the tree. Node services do not do this during boot.
+        if let Err(source) = tree.assign(child.raw_handle()) {
+            let _ = child.kill();
+            return Err(source.into());
+        }
+        Ok((pid, Box::pin(async move { child.wait().await })))
+    }
+
+    #[cfg(unix)]
+    fn spawn_os(
+        &self,
+        def: &ServiceDef,
+        log_path: &Path,
+        env: &std::collections::BTreeMap<String, String>,
+        tree: &ProcessTree,
+    ) -> Result<(u32, ExitFuture), RomError> {
+        use std::process::Stdio;
+
+        use tokio::process::Command;
+
+        let log = OpenOptions::new().create(true).append(true).open(log_path)?;
+        let stderr = log.try_clone()?;
+        let mut command = Command::new(&def.command);
+        command
+            .args(&def.args)
+            .current_dir(&def.dir)
+            .envs(env)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log))
+            .stderr(Stdio::from(stderr))
+            .process_group(0);
+        let mut child = command.spawn().map_err(|source| RomError::Spawn {
+            service: def.name.clone(),
+            command: def.command.clone(),
+            source,
+        })?;
+        let Some(pid) = child.id() else {
+            return Err(io::Error::other("child exited before it could be tracked").into());
+        };
+        if let Err(source) = tree.assign_pgid(pid) {
+            let _ = child.start_kill();
+            return Err(source.into());
+        }
+        Ok((pid, Box::pin(async move { child.wait().await })))
     }
 
     fn is_active(&self, name: &str) -> bool {
@@ -688,6 +704,8 @@ impl ProcessManager {
         error
     }
 }
+
+type ExitFuture = std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<ExitStatus>> + Send>>;
 
 async fn wait_for_exit(mut exited: watch::Receiver<bool>) {
     let _ = exited.wait_for(|done| *done).await;

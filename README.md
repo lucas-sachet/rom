@@ -4,6 +4,8 @@
 
 > Status: stage 8 is done (Linux/macOS). Plan, decisions and the real monorepo notes are in [docs/roadmap.md](docs/roadmap.md).
 
+**New here?** [Install + first steps](docs/getting-started.md).
+
 ## Why
 
 Running dozens of services with `nodemon` and `concurrently` means dozens of watchers and idle processes. `rom` runs one daemon per project that starts services only when they are needed, together with their dependencies.
@@ -18,29 +20,19 @@ Running dozens of services with `nodemon` and `concurrently` means dozens of wat
 
 On Windows the daemon uses Job Objects and named pipes. On Unix it uses process groups and a socket under `$XDG_RUNTIME_DIR` (or the system temp dir).
 
-## Build
+## Install and first run
+
+Build, put `rom` on `PATH`, create or discover a `rom.yaml`, then start a profile. Full walkthrough: [docs/getting-started.md](docs/getting-started.md).
 
 ```powershell
 cargo build --release -p rom
+# put target/release/rom(.exe) on PATH, then in your monorepo:
+rom discover --write
+rom check
+rom up --profile financeiro   # stays in this terminal; Ctrl+C stops everything
 ```
 
-The binary is `target\release\rom.exe`. Put it on `PATH` to use it from any project.
-
-## Quick start
-
-In the root of your monorepo:
-
-```powershell
-rom init          # creates rom.yaml
-rom check         # validates it
-rom start --profile financeiro
-rom status
-rom logs financial-service --follow
-rom stop --all
-rom daemon stop
-```
-
-`rom start` launches the daemon in the background if it is not running.
+`rom up` is the usual day-to-day command. `rom start` still exists for a detached background daemon.
 
 ## Configuration (`rom.yaml`)
 
@@ -105,12 +97,13 @@ Notes:
 | `rom init` | Creates `rom.yaml` in the current directory |
 | `rom discover [--write] [--force]` | Scans the monorepo and suggests a `rom.yaml` (prints by default; `--write` saves, `--force` overwrites) |
 | `rom check` | Validates `rom.yaml` |
-| `rom start [SERVICES] [-p PROFILE] [--all]` | Starts services and their dependencies |
+| `rom up [SERVICES] [-p PROFILE] [--all]` | Runs the daemon in this terminal, streams logs, optionally starts services (Ctrl+C stops all) |
+| `rom start [SERVICES] [-p PROFILE] [--all]` | Starts services via a background daemon (returns immediately) |
 | `rom stop [SERVICES] [-p PROFILE] [--all] [--force]` | Stops services. Refuses if running services depend on them, unless `--force` |
 | `rom restart SERVICE` | Restarts one service; its dependencies keep running |
 | `rom status` | Shows daemon cost plus per-service state, port, PID, uptime, connections, restarts, working set, CPU, last activity and last error |
 | `rom logs SERVICE [-n N] [-f]` | Prints or follows a service log |
-| `rom daemon start \| stop \| run` | Manages the background daemon (`run` stays in the foreground) |
+| `rom daemon start \| stop \| run` | Manages the background daemon (`run` stays in the foreground without auto-start) |
 
 ## How it works
 
@@ -121,7 +114,7 @@ Notes:
 
 ## Development
 
-The proposal, what is already built, and the next stages are in [docs/roadmap.md](docs/roadmap.md). Locked technical choices are in [docs/decisions.md](docs/decisions.md).
+User-facing install and first steps: [docs/getting-started.md](docs/getting-started.md). Proposal and history: [docs/roadmap.md](docs/roadmap.md). Locked technical choices: [docs/decisions.md](docs/decisions.md).
 
 ```powershell
 cargo test --workspace      # unit tests and integration tests (they run real Node processes)

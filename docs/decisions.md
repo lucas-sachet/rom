@@ -10,7 +10,9 @@ Idle HTTP keep-alive connections do not count. Node keeps them open by default, 
 
 ## Shutdown
 
-On Windows each service is started with its own hidden console (`CREATE_NEW_CONSOLE`). Stop re-invokes a small helper (`rom __ctrl_break <pid>` / `rom-ctrl-break`) that attaches to that console and sends `CTRL_BREAK` (Node: `SIGBREAK`), then waits up to `shutdown_timeout` before `TerminateJobObject`. Attaching in-process would deliver the signal to the daemon itself. Closing the Job Object when the daemon exits still kills leftovers.
+On Windows each service is started with its own console (`CREATE_NEW_CONSOLE`) created already hidden (`SW_HIDE`) so no prompt window flashes. Stop re-invokes a small helper (`rom __ctrl_break <pid>` / `rom-ctrl-break`, itself with `CREATE_NO_WINDOW`) that attaches to that console and sends `CTRL_BREAK` (Node: `SIGBREAK`), then waits up to `shutdown_timeout` before `TerminateJobObject`. Attaching in-process would deliver the signal to the daemon itself. Closing the Job Object when the daemon exits still kills leftovers.
+
+Day-to-day use is `rom up`: the daemon stays in the current terminal, service logs are tailed into that terminal, and Ctrl+C stops everything. `rom start` still launches a detached background daemon for when you want the CLI to return.
 
 `CREATE_NEW_PROCESS_GROUP` cannot be combined with `CREATE_NEW_CONSOLE` (Windows ignores the group flag), so the break is sent to every process on that console — normally just the service.
 
