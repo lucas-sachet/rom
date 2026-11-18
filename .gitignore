@@ -4,6 +4,10 @@
 # rom per-project state (logs, daemon log). Never commit it.
 .rom/
 
+# npm packages assembled by the release workflow, and local wrapper tests
+npm/dist/
+npm/rom-cli/node_modules/
+
 # Local editor and OS files
 .vscode/
 .idea/

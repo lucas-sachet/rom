@@ -13,9 +13,10 @@
 #   rom check
 #   rom up --profile app
 #
-# When rom is published, this is the same file that ships with the npm
-# package. Installing that package puts the `rom` command on your PATH.
-# Your services do not depend on it. Each one stays its own Node process.
+# Install the command with `npm install -g rom-cli`. The command is `rom`.
+# This file stays in the repository; copy it into your project. The npm
+# package does not load it. Your services do not depend on that package.
+# Each one stays its own Node process.
 # Do not put secrets in this file. Add `.rom/` to `.gitignore` (logs and
 # daemon state).
 

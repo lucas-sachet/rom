@@ -18,7 +18,7 @@ Day-to-day use is `rom up`: the daemon stays in the current terminal, service lo
 
 On Unix the service is started in a new process group. Stop sends `SIGTERM` to the process, then `SIGKILL` to the group after `shutdown_timeout`. Dropping the process-tree handle also SIGKILLs the group.
 
-Services do not import a rom library. A process that already drains on `SIGTERM` / `SIGBREAK` / `SIGINT` works unchanged. The CLI is the binary; the intended public install is an npm package that puts that binary on `PATH`.
+Services do not import a rom library. A process that already drains on `SIGTERM` / `SIGBREAK` / `SIGINT` works unchanged. The CLI is the binary. The public install is the npm package `rom-cli`, which puts that binary on `PATH` as `rom`.
 
 ## Discovery
 

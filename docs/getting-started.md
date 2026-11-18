@@ -6,11 +6,25 @@ Install the CLI, point it at a monorepo, then start only the services you need.
 
 ### Requirements
 
-- **OS:** Windows 10/11, Linux, or macOS
-- **Rust:** 1.85 or newer ([rustup](https://rustup.rs/))
-- **Node.js** on `PATH` if your services run with `node`
+- **OS:** Windows 10/11 x64, Linux x64 or arm64, or macOS x64 or arm64
+- **Node.js:** 18 or newer. This installs the `rom` command and runs your services.
+
+Rust is only required if you build rom from source.
+
+### Install the command
+
+```powershell
+npm install -g rom-cli
+rom --version
+```
+
+The package name is `rom-cli` because `rom` already belongs to another package. The command is still `rom`. npm downloads a prebuilt binary for your platform. You do not compile anything. The package is on npm after a version tag is published. The first tag is `v0.1.0`.
+
+If `rom` is not found, the npm global bin directory is not on `PATH`. `npm prefix -g` prints the prefix; the binaries are in its `bin` folder (on Windows, next to `npm` itself).
 
 ### Build from source
+
+Requires [Rust](https://rustup.rs/) 1.85 or newer.
 
 ```powershell
 git clone https://github.com/lucas-sachet/rom.git
@@ -51,7 +65,7 @@ cp target/release/rom ~/.local/bin/
 rom --version
 ```
 
-The intended install is an npm package that puts the `rom` binary on `PATH`. Services do not depend on that package. Until it is published, build from source as above, and replace the binary after each rebuild.
+Building from source is for working on rom. After you change it, stop any running daemon or `rom up` and replace the binary. An old process keeps the old binary. People using `npm install -g rom-cli` do not need this step.
 
 ### Verify
 

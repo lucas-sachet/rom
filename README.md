@@ -14,19 +14,19 @@ Running dozens of services with `nodemon` and `concurrently` means dozens of wat
 
 ## Requirements
 
-- Windows 10/11, Linux, or macOS
-- Rust 1.85+ (to build)
-- Node.js on `PATH` (to run Node services)
+- Windows 10/11 x64, Linux x64 or arm64, or macOS x64 or arm64
+- Node.js 18+ to install `rom` and to run Node services
 
-On Windows the daemon uses Job Objects and named pipes. On Unix it uses process groups and a socket under `$XDG_RUNTIME_DIR` (or the system temp dir).
+Rust 1.85+ is only needed to build rom from source. On Windows the daemon uses Job Objects and named pipes. On Unix it uses process groups and a socket under `$XDG_RUNTIME_DIR` (or the system temp dir).
 
 ## Install and first run
 
-Build, put `rom` on `PATH`, create or discover a `rom.yaml`, then start a profile. Full walkthrough: [docs/getting-started.md](docs/getting-started.md).
+The npm package is `rom-cli` (`rom` is already another package). The command it installs is `rom`. Full walkthrough: [docs/getting-started.md](docs/getting-started.md).
 
 ```powershell
-cargo build --release -p rom
-# put target/release/rom(.exe) on PATH, then in your monorepo:
+npm install -g rom-cli
+rom --version
+# then, in your project:
 rom discover --write
 rom check
 rom up --profile app          # stays in this terminal; Ctrl+C stops everything
@@ -36,7 +36,7 @@ rom up --profile app          # stays in this terminal; Ctrl+C stops everything
 
 ## Configuration (`rom.yaml`)
 
-The annotated example is [`examples/rom.yaml`](examples/rom.yaml). Copy that file to your project root and edit the names, paths and ports. The directories in it are placeholders, so `rom check` reports them missing until they exist. The same file is the one that ships with the npm package. It is not loaded from this repository: rom only reads `rom.yaml` or `rom.yml`.
+The annotated example is [`examples/rom.yaml`](examples/rom.yaml). Copy that file to your project root and edit the names, paths and ports. The directories in it are placeholders, so `rom check` reports them missing until they exist. rom only reads `rom.yaml` or `rom.yml`, and it does not load this copy from the repository.
 
 ```yaml
 version: 1
@@ -104,9 +104,36 @@ cargo test --workspace      # unit tests and integration tests (they run real No
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+Build from source when you are changing rom itself:
+
+```powershell
+cargo build --release -p rom
+# target/release/rom.exe on Windows, target/release/rom on Linux and macOS
+```
+
+### Releasing
+
+Tagged releases build the binaries in GitHub Actions and publish them. People who install rom do not need Rust.
+
+1. On npm, create a granular access token that can publish packages, without a 2FA prompt for CI. Add it as the `NPM_TOKEN` Actions secret.
+2. Set `version` in the workspace `Cargo.toml` to the release you want. The template in `npm/rom-cli/package.json` should use the same number.
+3. Commit and push `main`. The tag has to point at a commit that already contains `.github/workflows/release.yml`.
+4. Tag that version and push the tag. `v0.1.0` is the first one, matching the current `Cargo.toml`.
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow builds Windows x64, Linux x64 (musl), Linux arm64 (musl), macOS x64 and macOS arm64. It creates a GitHub Release with those binaries and publishes `rom-cli` plus one optional package per platform. `npm install -g rom-cli` installs only the package for the current machine and exposes the `rom` command.
+
+A manual run of the Release workflow (Actions → Release → Run workflow) only builds. It publishes when the run comes from a version tag.
+
 Layout:
 
 ```text
+.github/workflows/release.yml  tag build, GitHub Release, npm publish
+npm/rom-cli/         package template; the command name is rom
 examples/rom.yaml    annotated config; copy it to your project (not loaded here)
 apps/rom/            CLI and daemon binary
 crates/rom-core/     config, registry, process manager, gateway, IPC, Job Object wrapper
