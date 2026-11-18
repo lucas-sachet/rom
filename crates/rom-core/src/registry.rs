@@ -39,6 +39,8 @@ pub struct Registry {
     pub watch: WatchConfig,
     services: BTreeMap<String, ServiceDef>,
     profiles: BTreeMap<String, Vec<String>>,
+    /// Terminal label for a service, when a profile entry uses `service:label`.
+    labels: BTreeMap<String, String>,
     order: Vec<String>,
 }
 
@@ -111,15 +113,60 @@ impl Registry {
         }
 
         let mut profiles = BTreeMap::new();
+        let mut labels: BTreeMap<String, String> = BTreeMap::new();
         for (profile_name, profile) in &config.profiles {
-            for svc in &profile.services {
-                if !config.services.contains_key(svc) {
+            let mut names = Vec::new();
+            let mut listed = BTreeSet::new();
+            for raw in &profile.services {
+                let (service, alias) = match parse_profile_entry(raw) {
+                    Ok(entry) => entry,
+                    Err(message) => {
+                        errors.push(format!("profile `{profile_name}`: {message}"));
+                        continue;
+                    }
+                };
+                if !config.services.contains_key(&service) {
                     errors.push(format!(
-                        "profile `{profile_name}` references unknown service `{svc}`"
+                        "profile `{profile_name}` references unknown service `{service}`"
                     ));
+                    continue;
                 }
+                if !listed.insert(service.clone()) {
+                    errors.push(format!(
+                        "profile `{profile_name}` lists `{service}` more than once"
+                    ));
+                    continue;
+                }
+                if let Some(alias) = alias {
+                    if !is_valid_name(&alias) {
+                        errors.push(format!(
+                            "profile `{profile_name}` alias `{alias}` for `{service}` must use lowercase letters, digits and dashes"
+                        ));
+                    } else if config.services.contains_key(&alias) && alias != service {
+                        errors.push(format!(
+                            "profile `{profile_name}` alias `{alias}` for `{service}` is also a service name"
+                        ));
+                    } else if let Some(other) = labels
+                        .iter()
+                        .find(|(name, label)| *name != &service && *label == &alias)
+                        .map(|(name, _)| name.clone())
+                    {
+                        errors.push(format!(
+                            "alias `{alias}` is used by both `{other}` and `{service}`"
+                        ));
+                    } else if let Some(existing) =
+                        labels.get(&service).filter(|existing| *existing != &alias)
+                    {
+                        errors.push(format!(
+                            "`{service}` has aliases `{existing}` and `{alias}`"
+                        ));
+                    } else {
+                        labels.insert(service.clone(), alias);
+                    }
+                }
+                names.push(service);
             }
-            profiles.insert(profile_name.clone(), profile.services.clone());
+            profiles.insert(profile_name.clone(), names);
         }
 
         if !errors.is_empty() {
@@ -140,8 +187,21 @@ impl Registry {
             watch: config.watch,
             services,
             profiles,
+            labels,
             order,
         })
+    }
+
+    /// Name printed in `rom up`. A profile alias wins; otherwise the service name.
+    pub fn display_label<'a>(&'a self, service: &'a str) -> &'a str {
+        self.labels
+            .get(service)
+            .map(String::as_str)
+            .unwrap_or(service)
+    }
+
+    pub fn labels(&self) -> &BTreeMap<String, String> {
+        &self.labels
     }
 
     pub fn get(&self, name: &str) -> Result<&ServiceDef, RomError> {
@@ -249,6 +309,19 @@ fn visit(
     Ok(())
 }
 
+/// `user-service` or `user-service:user`. The label is only the terminal prefix.
+fn parse_profile_entry(raw: &str) -> Result<(String, Option<String>), String> {
+    let Some((service, alias)) = raw.split_once(':') else {
+        return Ok((raw.to_owned(), None));
+    };
+    if service.is_empty() || alias.is_empty() || alias.contains(':') {
+        return Err(format!(
+            "entry `{raw}` must be a service name or `service:label`"
+        ));
+    }
+    Ok((service.to_owned(), Some(alias.to_owned())))
+}
+
 fn is_valid_name(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('-')
@@ -318,6 +391,64 @@ mod tests {
             "",
         )));
         assert!(messages.iter().any(|m| m.contains("cycle")));
+    }
+
+    #[test]
+    fn profile_alias_stays_a_label_and_start_uses_the_real_name() {
+        let registry = build(&config_yaml(
+            &[
+                ("user-service", 3001, ""),
+                ("transport-service", 3002, ""),
+                ("transport-request-service", 3003, ""),
+            ],
+            "profiles:\n  transport:\n    services:\n      - user-service:user\n      - transport-service\n      - transport-request-service:transport-req\n",
+        ))
+        .unwrap();
+        assert_eq!(
+            registry.profile("transport").unwrap(),
+            [
+                "user-service",
+                "transport-service",
+                "transport-request-service"
+            ]
+        );
+        assert_eq!(registry.display_label("user-service"), "user");
+        assert_eq!(
+            registry.display_label("transport-service"),
+            "transport-service"
+        );
+        assert_eq!(
+            registry.display_label("transport-request-service"),
+            "transport-req"
+        );
+        assert_eq!(registry.display_label("missing"), "missing");
+    }
+
+    #[test]
+    fn profile_alias_must_be_unique_and_named_like_a_service() {
+        let unknown = invalid_messages(build(&config_yaml(
+            &[("user-service", 3001, "")],
+            "profiles:\n  p:\n    services: [nobody:nope]\n",
+        )));
+        assert!(unknown.iter().any(|m| m.contains("`nobody`")));
+
+        let bad = invalid_messages(build(&config_yaml(
+            &[("user-service", 3001, "")],
+            "profiles:\n  p:\n    services: ['user-service:User']\n",
+        )));
+        assert!(bad.iter().any(|m| m.contains("alias `User`")));
+
+        let clash = invalid_messages(build(&config_yaml(
+            &[("user-service", 3001, ""), ("transport-service", 3002, "")],
+            "profiles:\n  p:\n    services: [user-service:api, transport-service:api]\n",
+        )));
+        assert!(clash.iter().any(|m| m.contains("alias `api`")));
+
+        let renamed = invalid_messages(build(&config_yaml(
+            &[("user-service", 3001, ""), ("api", 3002, "")],
+            "profiles:\n  p:\n    services: [user-service:api]\n",
+        )));
+        assert!(renamed.iter().any(|m| m.contains("also a service name")));
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{IsTerminal, Read, Seek, SeekFrom, Write, stdout};
 use std::path::{Path, PathBuf};
@@ -54,6 +55,15 @@ watch:
 #
 services: {}
 
+# Profiles start a set of services. `service:label` (no space) is only the
+# name shown in `rom up`. Without `:label`, the service name is shown.
+#
+#  transport:
+#    services:
+#      - user-service
+#      - transport-service:transport
+#      - transport-request-service:transport-req
+#
 profiles: {}
 "#;
 
@@ -303,6 +313,12 @@ async fn up(
     );
 
     let service_names = registry.names();
+    let column_names = if names.is_empty() {
+        service_names.clone()
+    } else {
+        names.clone()
+    };
+    let labels = registry.labels().clone();
     let use_color = registry.prefix_colors && stdout_supports_color();
     if use_color {
         console::enable_ansi_stdout();
@@ -312,7 +328,15 @@ async fn up(
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let tail_shutdown = shutdown_rx.clone();
     let tail = tokio::spawn(async move {
-        follow_log_dir(log_dir, tail_shutdown, service_names, use_color).await
+        follow_log_dir(
+            log_dir,
+            tail_shutdown,
+            service_names,
+            column_names,
+            labels,
+            use_color,
+        )
+        .await
     });
 
     let start_names = names.clone();
@@ -386,12 +410,70 @@ fn stdout_supports_color() -> bool {
     stdout().is_terminal()
 }
 
-fn format_service_line(name: &str, line: &str, names: &[String], use_color: bool) -> String {
+/// Shared `[service]` column when prefix colors are on. The width is the
+/// longest visible name, and 20 is only a cap for names that exceed it.
+const PREFIX_MAX_WIDTH: usize = 20;
+
+fn format_service_line(
+    name: &str,
+    line: &str,
+    color_names: &[String],
+    column_names: &[String],
+    labels: &BTreeMap<String, String>,
+    use_color: bool,
+) -> String {
+    let shown = labels.get(name).map(String::as_str).unwrap_or(name);
     if !use_color {
-        return format!("[{name}] {line}");
+        return format!("[{shown}] {line}");
     }
-    let style = prefix_style(name, names);
-    format!("{style}[{name}]{RESET} {line}")
+    let style = prefix_style(name, color_names);
+    let label = align_prefix(shown, prefix_width(column_names, labels));
+    format!("{style}[{label}]{RESET} {line}")
+}
+
+fn prefix_width(names: &[String], labels: &BTreeMap<String, String>) -> usize {
+    let longest = names
+        .iter()
+        .map(|name| {
+            labels
+                .get(name)
+                .map(String::as_str)
+                .unwrap_or(name.as_str())
+                .chars()
+                .count()
+        })
+        .max()
+        .unwrap_or(0);
+    if longest == 0 {
+        return PREFIX_MAX_WIDTH;
+    }
+    longest.min(PREFIX_MAX_WIDTH)
+}
+
+/// Pads `name` to `width`, or compacts it the way concurrently does (`sta..end`).
+fn align_prefix(name: &str, width: usize) -> String {
+    let compact = compact_name(name, width);
+    let len = compact.chars().count();
+    if len >= width {
+        return compact;
+    }
+    format!("{compact}{}", " ".repeat(width - len))
+}
+
+fn compact_name(name: &str, width: usize) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    if chars.len() <= width || width == 0 {
+        return name.to_owned();
+    }
+    if width < 2 {
+        return chars.into_iter().take(width).collect();
+    }
+    let keep = width - 2;
+    let end_len = keep / 2;
+    let begin_len = keep - end_len;
+    let beginning: String = chars.iter().take(begin_len).collect();
+    let end: String = chars.iter().skip(chars.len() - end_len).collect();
+    format!("{beginning}..{end}")
 }
 
 fn prefix_style(name: &str, names: &[String]) -> &'static str {
@@ -412,6 +494,8 @@ async fn follow_log_dir(
     log_dir: PathBuf,
     mut shutdown: watch::Receiver<bool>,
     names: Vec<String>,
+    column_names: Vec<String>,
+    labels: BTreeMap<String, String>,
     use_color: bool,
 ) {
     use std::collections::HashMap;
@@ -454,7 +538,10 @@ async fn follow_log_dir(
                 }
                 *pos = len;
                 for line in chunk.lines() {
-                    println!("{}", format_service_line(&name, line, &names, use_color));
+                    println!(
+                        "{}",
+                        format_service_line(&name, line, &names, &column_names, &labels, use_color)
+                    );
                 }
             }
         }
@@ -813,12 +900,19 @@ fn select(
 
 #[cfg(test)]
 mod tests {
-    use super::{PREFIX_STYLES, RESET, config_template, format_service_line};
+    use std::collections::BTreeMap;
+
+    use super::{PREFIX_MAX_WIDTH, PREFIX_STYLES, RESET, config_template, format_service_line};
+
+    fn plain(name: &str, text: &str, names: &[String], use_color: bool) -> String {
+        format_service_line(name, text, names, names, &BTreeMap::new(), use_color)
+    }
 
     #[test]
     fn init_template_leaves_prefix_colors_commented() {
         let template = config_template();
         assert!(template.contains("# prefix_colors: true"));
+        assert!(template.contains("transport-request-service:transport-req"));
         assert!(
             !template
                 .lines()
@@ -829,7 +923,7 @@ mod tests {
     #[test]
     fn colored_prefix_does_not_paint_the_log_text() {
         let names = vec!["notification".to_owned(), "dashboard".to_owned()];
-        let line = format_service_line("notification", "\u{1b}[32mready\u{1b}[0m", &names, true);
+        let line = plain("notification", "\u{1b}[32mready\u{1b}[0m", &names, true);
         let (prefix, rest) = line.split_once(RESET).unwrap();
         assert_eq!(prefix, format!("{}[notification]", PREFIX_STYLES[0]));
         assert_eq!(rest, " \u{1b}[32mready\u{1b}[0m");
@@ -837,20 +931,131 @@ mod tests {
 
     #[test]
     fn plain_prefix_when_colors_are_off() {
+        let names = vec!["product-structure-service".to_owned(), "api".to_owned()];
         assert_eq!(
-            format_service_line("api", "ready", &[], false),
-            "[api] ready"
+            plain("product-structure-service", "ready", &names, false),
+            "[product-structure-service] ready"
         );
+    }
+
+    #[test]
+    fn colored_prefixes_share_one_column() {
+        let names = vec!["notification".to_owned(), "fleet".to_owned()];
+        let long = plain("notification", "a", &names, true);
+        let short = plain("fleet", "b", &names, true);
+        assert!(long.contains("[notification]"));
+        assert!(short.contains("[fleet       ]"));
+        assert_eq!(long.split_once(RESET).unwrap().1, " a");
+        assert_eq!(short.split_once(RESET).unwrap().1, " b");
+    }
+
+    #[test]
+    fn long_names_compact_from_both_ends() {
+        let names = vec![
+            "product-structure-service".to_owned(),
+            "product-stock-service".to_owned(),
+            "api".to_owned(),
+        ];
+        let structure = plain("product-structure-service", "up", &names, true);
+        let stock = plain("product-stock-service", "up", &names, true);
+        let api = plain("api", "up", &names, true);
+        assert!(structure.contains("[product-s..e-service]"));
+        assert!(stock.contains("[product-s..k-service]"));
+        assert!(api.contains("[api                 ]"));
+        assert_eq!(structure.split_once(RESET).unwrap().1, " up");
+        assert_eq!(stock.split_once(RESET).unwrap().1, " up");
+        assert_eq!(api.split_once(RESET).unwrap().1, " up");
+    }
+
+    #[test]
+    fn profile_alias_is_the_prefix_and_keeps_the_width_rule() {
+        let names = vec![
+            "user-service".to_owned(),
+            "transport-service".to_owned(),
+            "transport-request-service".to_owned(),
+        ];
+        let mut labels = BTreeMap::new();
+        labels.insert("user-service".to_owned(), "user".to_owned());
+        labels.insert("transport-service".to_owned(), "transport".to_owned());
+        labels.insert(
+            "transport-request-service".to_owned(),
+            "transport-req".to_owned(),
+        );
+        let user = format_service_line("user-service", "up", &names, &names, &labels, true);
+        let request = format_service_line(
+            "transport-request-service",
+            "up",
+            &names,
+            &names,
+            &labels,
+            true,
+        );
+        let user_tag = tag(&user);
+        let request_tag = tag(&request);
+        assert_eq!(user_tag.trim(), "user");
+        assert_eq!(request_tag.trim(), "transport-req");
+        assert_eq!(user_tag.chars().count(), request_tag.chars().count());
+        assert!(user.starts_with(PREFIX_STYLES[0]));
+        assert_eq!(
+            format_service_line("user-service", "up", &names, &names, &labels, false),
+            "[user] up"
+        );
+    }
+
+    #[test]
+    fn column_stays_at_the_longest_visible_name() {
+        let color_names = vec![
+            "product-structure-service".to_owned(),
+            "user-service".to_owned(),
+            "transport-request-service".to_owned(),
+        ];
+        let column_names = vec![
+            "user-service".to_owned(),
+            "transport-request-service".to_owned(),
+        ];
+        let mut labels = BTreeMap::new();
+        labels.insert("user-service".to_owned(), "user".to_owned());
+        labels.insert(
+            "transport-request-service".to_owned(),
+            "transport-request".to_owned(),
+        );
+        let user = format_service_line(
+            "user-service",
+            "up",
+            &color_names,
+            &column_names,
+            &labels,
+            true,
+        );
+        let request = format_service_line(
+            "transport-request-service",
+            "up",
+            &color_names,
+            &column_names,
+            &labels,
+            true,
+        );
+        assert_eq!(tag(&user).trim(), "user");
+        assert_eq!(tag(&request).trim(), "transport-request");
+        assert_eq!(tag(&user).chars().count(), "transport-request".len());
+        assert!(tag(&user).chars().count() < PREFIX_MAX_WIDTH);
+    }
+
+    fn tag(line: &str) -> &str {
+        let head = line.split_once(RESET).map(|(head, _)| head).unwrap_or(line);
+        head.rsplit_once('[')
+            .map(|(_, rest)| rest.trim_end_matches(']'))
+            .unwrap_or("")
     }
 
     #[test]
     fn each_service_keeps_the_same_color() {
         let names = vec!["a".to_owned(), "b".to_owned()];
-        let first = format_service_line("b", "one", &names, true);
-        let again = format_service_line("b", "two", &names, true);
+        let first = plain("b", "one", &names, true);
+        let again = plain("b", "two", &names, true);
         assert!(first.starts_with(PREFIX_STYLES[1]));
         assert!(again.starts_with(PREFIX_STYLES[1]));
-        let other = format_service_line("a", "x", &names, true);
+        let other = plain("a", "x", &names, true);
         assert!(other.starts_with(PREFIX_STYLES[0]));
     }
 }

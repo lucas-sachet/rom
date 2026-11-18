@@ -53,8 +53,11 @@ pub struct Runtime {
 /// Commented hint inserted into generated `rom.yaml` files. Kept commented so
 /// prefix colors stay off until someone opts in.
 pub const PREFIX_COLORS_YAML_HINT: &str = r#"  # Color only the [service] prefix in `rom up`, like concurrently.
-  # The log text itself is not colored. Has no effect when stdout is not a
-  # terminal or when NO_COLOR is set. Uncomment to enable:
+  # Prefixes share one width: the longest name in this run, capped at 20.
+  # The cap is used only when a name is longer than that. Shorter names are
+  # padded; longer ones compact to `sta..end`. The log text itself is not colored.
+  # Has no effect when stdout is not a terminal or when NO_COLOR is set.
+  # Uncomment to enable:
   # prefix_colors: true
 "#;
 
@@ -133,6 +136,7 @@ pub enum HealthKind {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Profile {
+    /// Service names. `service:label` (no space around `:`) shows `label` in `rom up`.
     pub services: Vec<String>,
 }
 
