@@ -2,7 +2,7 @@
 
 **Runtime Orchestrator for Microservices.** A local runtime that starts Node.js microservices on demand, stops them when they are idle, and keeps development machines light.
 
-> Status: stage 8 is done (Linux/macOS). Plan, decisions and the real monorepo notes are in [docs/roadmap.md](docs/roadmap.md).
+> Status: Windows, Linux and macOS are supported. Design decisions are in [docs/decisions.md](docs/decisions.md).
 
 **New here?** [Install + first steps](docs/getting-started.md).
 
@@ -29,71 +29,33 @@ cargo build --release -p rom
 # put target/release/rom(.exe) on PATH, then in your monorepo:
 rom discover --write
 rom check
-rom up --profile financeiro   # stays in this terminal; Ctrl+C stops everything
+rom up --profile app          # stays in this terminal; Ctrl+C stops everything
 ```
 
 `rom up` is the usual day-to-day command. `rom start` still exists for a detached background daemon.
 
 ## Configuration (`rom.yaml`)
 
+The annotated example is [`examples/rom.yaml`](examples/rom.yaml). Copy that file to your project root and edit the names, paths and ports. The directories in it are placeholders, so `rom check` reports them missing until they exist. The same file is the one that ships with the npm package. It is not loaded from this repository: rom only reads `rom.yaml` or `rom.yml`.
+
 ```yaml
 version: 1
 
 project:
-  name: tex-erp
+  name: my-app
   root: .
 
-runtime:
-  startup_timeout: 30s
-  shutdown_timeout: 30s
-  idle_timeout: 30s             # stop on-demand services with no proxied connections
-  connection_idle: 5s           # close keep-alive with no bytes either way
-  # What `rom up` prints besides each service's own log.
-  # dev: service logs only. Rom stays quiet; a failed command still prints its error.
-  # status: also lifecycle lines — starting, sleeping (idle standby), restarting, failed.
-  # verbose: status, plus daemon diagnostics for tracking bugs.
-  # `ROM_LOG` overrides the diagnostics when it is set.
-  log: dev
-  # Color only the [service] prefix in `rom up`, like concurrently.
-  # The letters are colored. `prefix_background` fills the background instead,
-  # and only applies when prefix colors are on.
-  # Prefixes share one width: the longest name in this run, capped at 20.
-  # The cap is used only when a name is longer than that. Shorter names are
-  # padded; longer ones compact to `sta..end`. The log text itself is not colored.
-  # Has no effect when stdout is not a terminal or when NO_COLOR is set.
-  # Uncomment to enable:
-  # prefix_colors: true
-  # prefix_background: true
-
-watch:
-  debounce: 300ms               # min time from first change before restart
-  settle: 500ms                 # quiet window after last change before restart
-
 services:
-  user-service:
-    path: ./user-service
+  api:
+    path: ./services/api
     command: node
     args: [server.js]
-    port: 3001                  # public port (gateway); process gets a free PORT
-    health:                     # optional; without it, "ready" means the listen port accepts connections
-      type: http
-      path: /health
-    dependencies: []
-
-  financial-service:
-    path: ./financial-service
-    command: node
-    args: [server.js]
-    port: 3002
-    mode: on-demand             # or `persistent` for queues/cron (never idle-stopped)
-    dependencies:
-      - user-service
+    port: 3001
 
 profiles:
-  financeiro:
+  app:
     services:
-      - financial-service
-      - user-service:user          # optional terminal label; no space around `:`
+      - api
 ```
 
 Notes:
@@ -106,7 +68,7 @@ Notes:
 - One project watcher restarts **running** services when their files change (`node_modules`, `.git`, `dist`, … are not watched). Sleeping services stay asleep. A `.git/index.lock` pauses reloads.
 - `runtime.log` chooses what rom prints beside service logs. `dev` (the default) shows service logs only. `status` also prints lifecycle lines: a service starting again, going to sleep after idle (standby), restarting, failing, or crashing. `verbose` adds daemon diagnostics for tracking bugs. `ROM_LOG` overrides those diagnostics when set. Service `mode` (`on-demand` or `persistent`) is a different setting.
 - `runtime.prefix_colors` (off unless uncommented) paints only the `[service]` tag in `rom up`. The letters use basic ANSI colors, so your terminal theme sets the exact shade. Each service in a run gets its own color, repeating only after the 12th. `runtime.prefix_background` fills that tag's background with the same hues, and only applies while prefix colors are on. The shared width is the longest name in that run, capped at 20: the cap applies only when a name is longer than 20. Shorter names are padded and longer ones compact to `sta..end`, so the log text always starts in the same column. The log line is printed as the process wrote it.
-- A profile entry `service:label` (no space around `:`) shows `label` in that tag. Without `:label`, the service name is shown. `rom start` and `rom stop` still use the real service name. The label follows the same width rule.
+- A profile entry `service:label` (no space around `:`) shows `label` in that tag. In the example, `web:site` prints `site`. Without `:label`, the service name is shown. `rom start` and `rom stop` still use the real service name. The label follows the same width rule.
 - Design notes for the gateway, idle detection and shutdown are in [docs/decisions.md](docs/decisions.md).
 - Service directories are used as-is. Each service keeps its own `node_modules`.
 - Validation reports duplicate ports, unknown dependencies, dependency cycles, missing directories and unknown profile members.
@@ -135,7 +97,7 @@ Notes:
 
 ## Development
 
-User-facing install and first steps: [docs/getting-started.md](docs/getting-started.md). Proposal and history: [docs/roadmap.md](docs/roadmap.md). Locked technical choices: [docs/decisions.md](docs/decisions.md).
+User-facing install and first steps: [docs/getting-started.md](docs/getting-started.md). Locked technical choices: [docs/decisions.md](docs/decisions.md).
 
 ```powershell
 cargo test --workspace      # unit tests and integration tests (they run real Node processes)
@@ -145,6 +107,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 Layout:
 
 ```text
+examples/rom.yaml    annotated config; copy it to your project (not loaded here)
 apps/rom/            CLI and daemon binary
 crates/rom-core/     config, registry, process manager, gateway, IPC, Job Object wrapper
 crates/rom-core/tests/lifecycle.rs   process lifecycle with real Node processes

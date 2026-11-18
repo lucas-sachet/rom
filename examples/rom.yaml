@@ -1,0 +1,136 @@
+# Example configuration for rom.
+#
+# This file is a guide for a first run. It is not the config of the rom
+# package, and rom does not load it while you work in this repository:
+# the tool only reads a file named rom.yaml or rom.yml, walking up from
+# the directory where you run the command.
+#
+# Copy it to the root of your own project, then change the names, paths
+# and ports. The directories below are placeholders, so `rom check` reports
+# them as missing until they exist.
+#
+#   cp examples/rom.yaml rom.yaml
+#   rom check
+#   rom up --profile app
+#
+# When rom is published, this is the same file that ships with the npm
+# package. Installing that package puts the `rom` command on your PATH.
+# Your services do not depend on it. Each one stays its own Node process.
+# Do not put secrets in this file. Add `.rom/` to `.gitignore` (logs and
+# daemon state).
+
+# Config schema. Only 1 is accepted.
+version: 1
+
+project:
+  # Short name for this project. One daemon per project.
+  name: my-app
+  # Base directory for every service `path`. Relative to this file.
+  # `.` means the directory that contains rom.yaml.
+  root: .
+
+runtime:
+  # How long to wait until a service is ready (listen port, and /health
+  # when `health` is set). Startup fails when this elapses.
+  startup_timeout: 30s
+  # How long to wait after a graceful stop before the process tree is killed.
+  shutdown_timeout: 30s
+  # Stop an on-demand service after this long with no proxied connections.
+  # `mode: persistent` is never stopped for idle.
+  idle_timeout: 30s
+  # Close a proxied connection after this long with no bytes either way,
+  # so a quiet HTTP keep-alive does not keep a service awake.
+  connection_idle: 5s
+  # What `rom up` prints besides each service's own log.
+  # dev: service logs only. Rom stays quiet; a failed command still prints its error.
+  # status: also lifecycle lines — starting, sleeping (idle standby), restarting, failed.
+  # verbose: status, plus daemon diagnostics for tracking bugs.
+  # `ROM_LOG` overrides the diagnostics when it is set.
+  log: dev
+  # Color only the [service] prefix in `rom up`, like concurrently.
+  # The letters are colored. `prefix_background` fills the background instead,
+  # and only applies when prefix colors are on.
+  # Prefixes share one width: the longest name in this run, capped at 20.
+  # The cap is used only when a name is longer than that. Shorter names are
+  # padded; longer ones compact to `sta..end`. The log text itself is not colored.
+  # Has no effect when stdout is not a terminal or when NO_COLOR is set.
+  # Uncomment to enable:
+  # prefix_colors: true
+  # prefix_background: true
+
+watch:
+  # Minimum time from the first file change before a restart.
+  debounce: 300ms
+  # Quiet window after the last change before that restart runs.
+  # One project watcher covers every running service. Sleeping services
+  # stay asleep. `node_modules`, `.git`, `dist` and similar are not watched.
+  settle: 500ms
+
+# One entry per process. The key is the service name: lowercase letters,
+# digits and dashes. `command` is run without a shell, so use `node` and
+# put the script in `args`. Do not use `npm`, `npx` or `ts-node` as `command`.
+# TypeScript with ts-node:
+#   command: node
+#   args: [-r, ts-node/register, server.ts]
+services:
+  # HTTP API. Starts on demand and stops again when idle.
+  api:
+    # Working directory, relative to `project.root`. Used as-is, with its
+    # own node_modules. Not merged with any other service.
+    path: ./services/api
+    command: node
+    args: [server.js]
+    # Public port. Clients use http://127.0.0.1:3001.
+    # The process listens on a free port that rom passes as PORT.
+    port: 3001
+    # on-demand (the default) or persistent. Persistent never idle-stops
+    # (queues, cron, anything that must stay up with no inbound connection).
+    mode: on-demand
+    # Extra environment variables. rom also sets PORT, ROM_SERVICE and,
+    # for Node, NODE_COMPILE_CACHE. Values are strings. No secrets here.
+    env:
+      NODE_ENV: development
+    # Optional. Without it, ready means the listen port accepts connections.
+    # With it, that port must accept connections and this path must return 2xx.
+    health:
+      type: http
+      path: /health
+    # Services that must be running before this one. Empty is valid.
+    # A cycle, a missing name, or a dependency on itself fails `rom check`.
+    dependencies: []
+
+  # Background process. Stays up because nothing connects to it on a schedule.
+  worker:
+    path: ./services/worker
+    command: node
+    args: [server.js]
+    port: 3002
+    mode: persistent
+    # Started together with this service. rom also starts these when a
+    # client connects to a sleeping service that depends on them.
+    dependencies:
+      - api
+
+  # Second on-demand service. `mode` is omitted, so it is on-demand.
+  # No `health` block, so ready means the listen port accepts connections.
+  web:
+    path: ./apps/web
+    command: node
+    args: [server.js]
+    port: 3000
+    dependencies:
+      - api
+
+# A profile is a named set of services for `rom up --profile <name>`.
+# An entry is a service name, or `service:label` with no spaces around `:`.
+# The label is only what `rom up` prints in the log prefix. `rom start`
+# and `rom stop` still use the service name. Dependencies of a listed
+# service start even when they are not listed again.
+profiles:
+  app:
+    services:
+      - api
+      - web:site
+  jobs:
+    services:
+      - worker

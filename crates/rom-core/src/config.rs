@@ -248,6 +248,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn example_config_parses() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/rom.yaml");
+        let config = load(&path).expect("examples/rom.yaml");
+        assert_eq!(config.version, 1);
+        assert_eq!(config.project.name, "my-app");
+        assert_eq!(config.project.root, ".");
+        assert_eq!(config.runtime.log, LogLevel::Dev);
+        assert!(!config.runtime.prefix_colors);
+        assert!(config.services.contains_key("api"));
+        assert!(config.services.contains_key("worker"));
+        assert!(config.services.contains_key("web"));
+        assert_eq!(
+            config.services["worker"].mode,
+            crate::config::Mode::Persistent
+        );
+        assert_eq!(config.services["web"].dependencies, vec!["api".to_owned()]);
+        assert!(config.profiles.contains_key("app"));
+        assert!(config.profiles.contains_key("jobs"));
+        assert!(
+            config.profiles["app"]
+                .services
+                .iter()
+                .any(|entry| entry == "web:site")
+        );
+    }
+
+    #[test]
     fn parses_durations() {
         assert_eq!(parse_duration("500ms"), Ok(Duration::from_millis(500)));
         assert_eq!(parse_duration("30s"), Ok(Duration::from_secs(30)));

@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn slugifies_scoped_package_names() {
-        assert_eq!(slugify("@tex/user-service"), "tex-user-service");
+        assert_eq!(slugify("@acme/user-service"), "acme-user-service");
         assert_eq!(slugify("User_Service"), "user-service");
     }
 

@@ -51,7 +51,7 @@ cp target/release/rom ~/.local/bin/
 rom --version
 ```
 
-There is no installer package yet. Re-run `cargo build --release -p rom` and replace the binary when you update.
+The intended install is an npm package that puts the `rom` binary on `PATH`. Services do not depend on that package. Until it is published, build from source as above, and replace the binary after each rebuild.
 
 ### Verify
 
@@ -65,7 +65,15 @@ You should see subcommands such as `init`, `discover`, `start`, `status`, and `d
 
 ## First steps
 
-Work from the root of the monorepo you want to orchestrate (the directory that should own `rom.yaml`).
+Work from the root of the project you want to orchestrate (the directory that should own `rom.yaml`).
+
+The field-by-field guide is [`examples/rom.yaml`](../examples/rom.yaml), with generic names (`my-app`, `api`, `worker`, `web`). Copy it and edit the paths:
+
+```powershell
+cp path\to\rom\examples\rom.yaml .\rom.yaml
+```
+
+The paths in that file are placeholders. `rom check` reports a missing directory until you point each service at a real folder.
 
 ### 1. Create or discover `rom.yaml`
 
@@ -94,7 +102,7 @@ Minimal service entry:
 ```yaml
 services:
   api:
-    path: ./api
+    path: ./services/api
     command: node
     args: [server.js]
     port: 3001
@@ -119,7 +127,7 @@ Stay in the current terminal with live logs (Ctrl+C stops everything):
 
 ```powershell
 rom up api                    # one service (+ its yaml dependencies)
-rom up --profile financeiro
+rom up --profile app
 rom up --all
 rom up                        # daemon only; services start on first request to their public port
 ```
@@ -128,7 +136,7 @@ Background mode (CLI returns immediately; output goes to `.rom/logs/`):
 
 ```powershell
 rom start api
-rom start --profile financeiro
+rom start --profile app
 rom daemon stop
 ```
 
@@ -172,7 +180,7 @@ Typical session:
 
 ```powershell
 cd path\to\your-monorepo
-rom up --profile financeiro
+rom up --profile app
 # logs stream here; develop against the public ports in rom.yaml
 # Ctrl+C when done
 ```
@@ -187,4 +195,3 @@ Useful habits:
 
 - Full `rom.yaml` reference and command table: [README](../README.md)
 - Why the gateway, idle timer, and shutdown work the way they do: [decisions.md](decisions.md)
-- Project history and scope: [roadmap.md](roadmap.md)

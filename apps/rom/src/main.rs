@@ -40,10 +40,11 @@ watch:
   debounce: 300ms
   settle: 500ms
 
-# Services go under `services:`. Example:
+# Services go under `services:`. The annotated example that ships with rom
+# is examples/rom.yaml in the rom repository. Same shape:
 #
-#  user-service:
-#    path: ./user-service
+#  api:
+#    path: ./services/api
 #    command: node
 #    args: [server.js]
 #    port: 3001
@@ -58,11 +59,10 @@ services: {}
 # Profiles start a set of services. `service:label` (no space) is only the
 # name shown in `rom up`. Without `:label`, the service name is shown.
 #
-#  transport:
+#  app:
 #    services:
-#      - user-service
-#      - transport-service:transport
-#      - transport-request-service:transport-req
+#      - api
+#      - web:site
 #
 profiles: {}
 "#;
@@ -960,7 +960,8 @@ mod tests {
         assert!(template.contains("# prefix_colors: true"));
         assert!(template.contains("# prefix_background: true"));
         assert!(template.lines().any(|line| line.trim() == "log: dev"));
-        assert!(template.contains("transport-request-service:transport-req"));
+        assert!(template.contains("web:site"));
+        assert!(template.contains("examples/rom.yaml"));
         assert!(!template.lines().any(|line| {
             let trimmed = line.trim_start();
             trimmed.starts_with("prefix_colors:") || trimmed.starts_with("prefix_background:")
