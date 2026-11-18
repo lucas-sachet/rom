@@ -51,14 +51,6 @@ jobs:
             artifact: rom-linux-arm64
             binary: rom
             musl: true
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            artifact: rom-darwin-arm64
-            binary: rom
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact: rom-darwin-x64
-            binary: rom
     steps:
       - uses: actions/checkout@v4
 
@@ -88,9 +80,53 @@ jobs:
           path: target/${{ matrix.target }}/release/${{ matrix.binary }}
           if-no-files-found: error
 
+  # One macOS runner builds both binaries. macos-latest is arm64, and GitHub
+  # often has no free arm64 runner for a second job. x64 is cross-compiled
+  # on that same machine (Rosetta runs the smoke test).
+  build-macos:
+    name: macos
+    runs-on: macos-latest
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build arm64
+        env:
+          CARGO_BUILD_TARGET: aarch64-apple-darwin
+        run: cargo build --release --locked -p rom
+
+      - name: Build x64
+        env:
+          CARGO_BUILD_TARGET: x86_64-apple-darwin
+        run: cargo build --release --locked -p rom
+
+      - name: Smoke test
+        run: |
+          ./target/aarch64-apple-darwin/release/rom --version
+          ./target/x86_64-apple-darwin/release/rom --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rom-darwin-arm64
+          path: target/aarch64-apple-darwin/release/rom
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rom-darwin-x64
+          path: target/x86_64-apple-darwin/release/rom
+          if-no-files-found: error
+
   publish:
     name: Publish
-    needs: build
+    needs: [build, build-macos]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
