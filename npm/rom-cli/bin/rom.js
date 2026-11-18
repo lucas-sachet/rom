@@ -2,35 +2,41 @@
 'use strict';
 
 const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
 
-// Keys must match the platforms in npm/prepare-publish.mjs.
-const PACKAGES = {
-  'win32 x64': ['rom-cli-win32-x64', 'rom.exe'],
-  'linux x64': ['rom-cli-linux-x64', 'rom'],
-  'linux arm64': ['rom-cli-linux-arm64', 'rom'],
-};
+const NATIVE_DIR = path.join(__dirname, 'native');
 
-function resolveBinary() {
-  const key = `${process.platform} ${process.arch}`;
-  const entry = PACKAGES[key];
-  if (!entry) {
+function resolveBinary({
+  platform = process.platform,
+  arch = process.arch,
+  nativeDir = NATIVE_DIR,
+} = {}) {
+  const name = platform === 'win32' ? 'rom.exe' : 'rom';
+  const exe = path.join(nativeDir, `${platform}-${arch}`, name);
+  if (!fs.existsSync(exe)) {
     return {
-      error: `rom: no prebuilt binary for ${process.platform} ${process.arch}. See https://github.com/lucas-sachet/rom/releases`,
+      error: `rom: no prebuilt binary for ${platform} ${arch}. Supported: win32 x64, linux x64, linux arm64. See https://github.com/lucas-sachet/rom/releases`,
     };
   }
+  return { exe };
+}
 
-  const [pkg, file] = entry;
-  let packageJson;
+// npm can drop the execute bit from files that are not `bin` entries. Restore it
+// when the install owns the file. If that fails, spawn reports the error.
+function ensureExecutable(exe) {
+  if (process.platform === 'win32') {
+    return;
+  }
   try {
-    packageJson = require.resolve(`${pkg}/package.json`);
+    fs.accessSync(exe, fs.constants.X_OK);
   } catch {
-    return {
-      error: `rom: ${pkg} is not installed. Reinstall with \`npm install -g rom-cli\`, or download a binary from https://github.com/lucas-sachet/rom/releases`,
-    };
+    try {
+      fs.chmodSync(exe, 0o755);
+    } catch {
+      // Left for spawnSync to report.
+    }
   }
-
-  return { exe: path.join(path.dirname(packageJson), file) };
 }
 
 function main() {
@@ -39,6 +45,7 @@ function main() {
     console.error(resolved.error);
     process.exit(1);
   }
+  ensureExecutable(resolved.exe);
 
   const result = spawnSync(resolved.exe, process.argv.slice(2), {
     stdio: 'inherit',
@@ -54,5 +61,5 @@ function main() {
 if (require.main === module) {
   main();
 } else {
-  module.exports = { resolveBinary, PACKAGES };
+  module.exports = { resolveBinary, ensureExecutable, NATIVE_DIR };
 }

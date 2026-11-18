@@ -118,14 +118,14 @@ Tagged releases build the binaries in GitHub Actions and publish them. People wh
 1. On npm, create a granular access token that can publish packages, without a 2FA prompt for CI. Add it as the `NPM_TOKEN` Actions secret.
 2. Set `version` in the workspace `Cargo.toml` to the release you want. The template in `npm/rom-cli/package.json` should use the same number.
 3. Commit and push `main`. The tag has to point at a commit that already contains `.github/workflows/release.yml`.
-4. Tag that version and push the tag. `v0.1.0` is the first one, matching the current `Cargo.toml`.
+4. Tag that version and push the tag, for example `v0.1.1`. The tag has to match the `Cargo.toml` version. A version that is already on npm cannot be published again, so bump it for every release.
 
 ```powershell
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
-The workflow builds Windows x64, Linux x64 (musl) and Linux arm64 (musl). It creates a GitHub Release with those binaries and publishes `rom-cli` plus one optional package per platform. `npm install -g rom-cli` installs only the package for the current machine and exposes the `rom` command. macOS is left out of this release: its GitHub runners were not available. It returns as a later version.
+The workflow builds Windows x64, Linux x64 (musl) and Linux arm64 (musl), and publishes one package, `rom-cli`. The binaries go inside the npm tarball, so installing it downloads nothing and runs no install script. The same binaries are attached to the GitHub Release. macOS is left out of this release: its runners were not available. It returns as a later version.
 
 A manual run of the Release workflow (Actions → Release → Run workflow) only builds. It publishes when the run comes from a version tag.
 

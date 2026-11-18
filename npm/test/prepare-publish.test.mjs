@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile, mkdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { pack, platforms } from '../prepare-publish.mjs';
 
-test('pack builds one package per platform and the rom-cli wrapper', async () => {
+test('pack bundles every binary inside the rom-cli package', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'rom-pack-'));
   try {
     const artifacts = path.join(dir, 'artifacts');
@@ -17,26 +17,25 @@ test('pack builds one package per platform and the rom-cli wrapper', async () =>
     }
 
     const out = path.join(dir, 'dist');
-    await pack({ version: '0.1.0', artifacts, out });
+    await pack({ version: '0.1.1', artifacts, out });
 
-    const cli = JSON.parse(await readFile(path.join(out, 'rom-cli', 'package.json'), 'utf8'));
+    const cliDir = path.join(out, 'rom-cli');
+    const cli = JSON.parse(await readFile(path.join(cliDir, 'package.json'), 'utf8'));
     assert.equal(cli.name, 'rom-cli');
-    assert.equal(cli.version, '0.1.0');
+    assert.equal(cli.version, '0.1.1');
     assert.equal(cli.bin.rom, 'bin/rom.js');
-    assert.equal(Object.keys(cli.optionalDependencies).length, platforms.length);
+    assert.equal(cli.scripts, undefined, 'install must not run any script');
+    assert.equal(cli.optionalDependencies, undefined);
+    assert.deepEqual(cli.files.filter((file) => file.startsWith('bin/')), [
+      'bin/rom.js',
+      'bin/native/',
+    ]);
+
     for (const platform of platforms) {
-      assert.equal(cli.optionalDependencies[`rom-cli-${platform.os}-${platform.cpu}`], '0.1.0');
-      const packed = JSON.parse(
-        await readFile(path.join(out, `rom-cli-${platform.os}-${platform.cpu}`, 'package.json'), 'utf8'),
-      );
-      assert.deepEqual(packed.os, [platform.os]);
-      assert.deepEqual(packed.cpu, [platform.cpu]);
-      const binary = await readFile(
-        path.join(out, `rom-cli-${platform.os}-${platform.cpu}`, platform.binary),
-        'utf8',
-      );
-      assert.equal(binary, `bin-${platform.artifact}`);
+      const bundled = path.join(cliDir, 'bin', 'native', `${platform.os}-${platform.cpu}`, platform.binary);
+      assert.equal(await readFile(bundled, 'utf8'), `bin-${platform.artifact}`);
     }
+    await assert.rejects(stat(path.join(cliDir, 'bin', 'install.js')));
 
     const sums = await readFile(path.join(out, 'assets', 'SHA256SUMS'), 'utf8');
     assert.equal(sums.trim().split('\n').length, platforms.length);

@@ -18,7 +18,7 @@ npm install -g rom-cli
 rom --version
 ```
 
-The package name is `rom-cli` because `rom` already belongs to another package. The command is still `rom`. npm downloads a prebuilt binary for your platform. You do not compile anything. The package is on npm after a version tag is published. The first tag is `v0.1.0`.
+The package name is `rom-cli` because `rom` already belongs to another package. The command is still `rom`. The package contains the prebuilt binary for Windows x64, Linux x64 and Linux arm64. Installing it does not download anything and does not compile anything. The package is on npm after a version tag is published.
 
 If `rom` is not found, the npm global bin directory is not on `PATH`. `npm prefix -g` prints the prefix; the binaries are in its `bin` folder (on Windows, next to `npm` itself).
 

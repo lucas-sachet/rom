@@ -6,6 +6,10 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+// Every binary ships inside the rom-cli tarball under bin/native/<os>-<cpu>/,
+// so installing never downloads anything and needs no install script.
+// macOS is not in this release: its runners were not available. Add a
+// darwin entry here and a build job in release.yml when that changes.
 export const platforms = [
   {
     os: 'win32',
@@ -28,15 +32,7 @@ export const platforms = [
     artifact: 'rom-linux-arm64',
     asset: 'rom-linux-arm64',
   },
-  // macOS is not published yet: its runners were not available for the first
-  // release. Add the darwin entries back here, in npm/rom-cli/package.json and
-  // in npm/rom-cli/bin/rom.js, together with a build job in release.yml.
 ];
-
-const repository = {
-  type: 'git',
-  url: 'git+https://github.com/lucas-sachet/rom.git',
-};
 
 export async function pack({ version, artifacts, out }) {
   if (!/^\d+\.\d+\.\d+$/.test(version)) {
@@ -46,18 +42,13 @@ export async function pack({ version, artifacts, out }) {
   const template = JSON.parse(
     await readFile(path.join(root, 'npm', 'rom-cli', 'package.json'), 'utf8'),
   );
-  const expected = platforms.map((platform) => `rom-cli-${platform.os}-${platform.cpu}`).sort();
-  const declared = Object.keys(template.optionalDependencies).sort();
-  if (expected.join() !== declared.join()) {
-    throw new Error(
-      `optionalDependencies must be ${expected.join(', ')}`,
-    );
-  }
 
   await mkdir(out, { recursive: true });
   const assets = path.join(out, 'assets');
   await mkdir(assets, { recursive: true });
 
+  const cliDir = path.join(out, 'rom-cli');
+  const binDir = path.join(cliDir, 'bin');
   const sums = [];
   for (const platform of platforms) {
     const source = path.join(artifacts, platform.artifact, platform.binary);
@@ -66,62 +57,36 @@ export async function pack({ version, artifacts, out }) {
     const hash = createHash('sha256').update(bytes).digest('hex');
     sums.push(`${hash}  ${platform.asset}`);
 
-    const pkgDir = path.join(out, `rom-cli-${platform.os}-${platform.cpu}`);
-    await mkdir(pkgDir, { recursive: true });
-    const binaryPath = path.join(pkgDir, platform.binary);
-    await writeFile(binaryPath, bytes);
+    // Copy for the GitHub Release, so people can download a binary directly.
+    const assetPath = path.join(assets, platform.asset);
+    await writeFile(assetPath, bytes);
+
+    // Copy for the npm tarball, in the folder the wrapper looks in.
+    const nativeDir = path.join(binDir, 'native', `${platform.os}-${platform.cpu}`);
+    await mkdir(nativeDir, { recursive: true });
+    const nativePath = path.join(nativeDir, platform.binary);
+    await writeFile(nativePath, bytes);
+
     if (platform.os !== 'win32') {
-      await chmod(binaryPath, 0o755);
+      await chmod(assetPath, 0o755);
+      await chmod(nativePath, 0o755);
     }
-    await writeFile(path.join(assets, platform.asset), bytes);
-    if (platform.os !== 'win32') {
-      await chmod(path.join(assets, platform.asset), 0o755);
-    }
-    await writeLicenses(pkgDir);
-    await writeFile(
-      path.join(pkgDir, 'package.json'),
-      `${JSON.stringify(platformPackage(platform, version), null, 2)}\n`,
-    );
   }
 
   sums.sort();
   await writeFile(path.join(assets, 'SHA256SUMS'), `${sums.join('\n')}\n`);
 
-  const cliDir = path.join(out, 'rom-cli');
-  await mkdir(path.join(cliDir, 'bin'), { recursive: true });
-  await copyFile(
-    path.join(root, 'npm', 'rom-cli', 'bin', 'rom.js'),
-    path.join(cliDir, 'bin', 'rom.js'),
-  );
-  await chmod(path.join(cliDir, 'bin', 'rom.js'), 0o755);
+  await mkdir(binDir, { recursive: true });
+  const wrapper = path.join(binDir, 'rom.js');
+  await copyFile(path.join(root, 'npm', 'rom-cli', 'bin', 'rom.js'), wrapper);
+  await chmod(wrapper, 0o755);
   await copyFile(path.join(root, 'README.md'), path.join(cliDir, 'README.md'));
   await writeLicenses(cliDir);
 
-  const optionalDependencies = {};
-  for (const name of expected) {
-    optionalDependencies[name] = version;
-  }
-  const cli = {
-    ...template,
-    version,
-    optionalDependencies,
-  };
+  const cli = { ...template, version };
+  delete cli.optionalDependencies;
+  delete cli.scripts;
   await writeFile(path.join(cliDir, 'package.json'), `${JSON.stringify(cli, null, 2)}\n`);
-}
-
-function platformPackage(platform, version) {
-  const name = `rom-cli-${platform.os}-${platform.cpu}`;
-  return {
-    name,
-    version,
-    description: `Prebuilt rom binary for ${platform.os} ${platform.cpu}. Install rom-cli instead.`,
-    license: 'MIT OR Apache-2.0',
-    repository,
-    os: [platform.os],
-    cpu: [platform.cpu],
-    files: [platform.binary, 'LICENSE-MIT', 'LICENSE-APACHE'],
-    publishConfig: { access: 'public' },
-  };
 }
 
 async function writeLicenses(dir) {

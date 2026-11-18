@@ -1,6 +1,6 @@
 {
   "name": "rom-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Runtime Orchestrator for Microservices. Starts Node services on demand and stops them when idle.",
   "license": "MIT OR Apache-2.0",
   "repository": {
@@ -16,6 +16,7 @@
   },
   "files": [
     "bin/rom.js",
+    "bin/native/",
     "LICENSE-MIT",
     "LICENSE-APACHE",
     "README.md"
@@ -25,10 +26,5 @@
   },
   "publishConfig": {
     "access": "public"
-  },
-  "optionalDependencies": {
-    "rom-cli-linux-arm64": "0.1.0",
-    "rom-cli-linux-x64": "0.1.0",
-    "rom-cli-win32-x64": "0.1.0"
   }
 }

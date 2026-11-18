@@ -147,7 +147,4 @@ jobs:
             fi
             return 1
           }
-          for dir in npm/dist/rom-cli-*; do
-            publish "$dir"
-          done
           publish npm/dist/rom-cli
