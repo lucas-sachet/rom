@@ -51,7 +51,57 @@ pub struct Runtime {
     /// When true, and `prefix_colors` is on, the prefix color fills the background.
     /// Otherwise the letters are colored.
     pub prefix_background: bool,
+    /// How much rom itself prints in the terminal where it is running.
+    pub log: LogLevel,
 }
+
+/// What `rom up` prints besides each service's own log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevel {
+    /// Service logs only. Rom stays quiet; a failed command still prints its error.
+    #[default]
+    Dev,
+    /// Service logs plus lifecycle: starting, sleeping, restarting, failed.
+    Status,
+    /// Lifecycle plus daemon diagnostics for tracking bugs.
+    Verbose,
+}
+
+impl LogLevel {
+    /// `status` and `verbose` print lifecycle lines. `dev` does not.
+    pub fn shows_lifecycle(self) -> bool {
+        !matches!(self, Self::Dev)
+    }
+
+    /// Tracing filter used when `ROM_LOG` is unset.
+    /// `dev` and `status` keep tracing at errors; `verbose` opens debug.
+    pub fn tracing_directive(self) -> &'static str {
+        match self {
+            Self::Verbose => "debug",
+            Self::Dev | Self::Status => "error",
+        }
+    }
+
+    /// Prints one lifecycle line when this level shows them.
+    pub fn emit(self, message: &str) {
+        if !self.shows_lifecycle() {
+            return;
+        }
+        let line = message.lines().next().unwrap_or(message);
+        println!("rom: {line}");
+    }
+}
+
+/// Active `log` value inserted into generated `rom.yaml` files.
+/// `dev` is the default: service logs only.
+pub const LOG_YAML_HINT: &str = r#"  # What `rom up` prints besides each service's own log.
+  # dev: service logs only. Rom stays quiet; a failed command still prints its error.
+  # status: also lifecycle lines — starting, sleeping (idle standby), restarting, failed.
+  # verbose: status, plus daemon diagnostics for tracking bugs.
+  # `ROM_LOG` overrides the diagnostics when it is set.
+  log: dev
+"#;
 
 /// Commented hint inserted into generated `rom.yaml` files. Kept commented so
 /// prefix colors stay off until someone opts in.
@@ -76,6 +126,7 @@ impl Default for Runtime {
             connection_idle: Duration::from_secs(5),
             prefix_colors: false,
             prefix_background: false,
+            log: LogLevel::Dev,
         }
     }
 }
@@ -237,5 +288,40 @@ mod tests {
         )
         .unwrap();
         assert!(background.runtime.prefix_background);
+    }
+
+    #[test]
+    fn log_level_defaults_to_dev() {
+        let off: Config =
+            serde_yaml_ng::from_str("version: 1\nproject:\n  name: t\nservices: {}\n").unwrap();
+        assert_eq!(off.runtime.log, LogLevel::Dev);
+        assert!(!off.runtime.log.shows_lifecycle());
+        assert_eq!(off.runtime.log.tracing_directive(), "error");
+
+        let hinted =
+            format!("version: 1\nproject:\n  name: t\nruntime:\n{LOG_YAML_HINT}services: {{}}\n");
+        let from_hint: Config = serde_yaml_ng::from_str(&hinted).unwrap();
+        assert_eq!(from_hint.runtime.log, LogLevel::Dev);
+        assert!(LOG_YAML_HINT.lines().any(|line| line.trim() == "log: dev"));
+
+        let status: Config = serde_yaml_ng::from_str(
+            "version: 1\nproject:\n  name: t\nruntime:\n  log: status\nservices: {}\n",
+        )
+        .unwrap();
+        assert_eq!(status.runtime.log, LogLevel::Status);
+        assert!(status.runtime.log.shows_lifecycle());
+        assert_eq!(status.runtime.log.tracing_directive(), "error");
+
+        let verbose: Config = serde_yaml_ng::from_str(
+            "version: 1\nproject:\n  name: t\nruntime:\n  log: verbose\nservices: {}\n",
+        )
+        .unwrap();
+        assert_eq!(verbose.runtime.log, LogLevel::Verbose);
+        assert_eq!(verbose.runtime.log.tracing_directive(), "debug");
+
+        let bad = serde_yaml_ng::from_str::<Config>(
+            "version: 1\nproject:\n  name: t\nruntime:\n  log: loud\nservices: {}\n",
+        );
+        assert!(bad.is_err());
     }
 }

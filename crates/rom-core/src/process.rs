@@ -107,6 +107,8 @@ struct Slot {
     last_activity: Option<Instant>,
     /// Bumped to cancel a pending idle-stop task.
     idle_generation: u64,
+    /// Set by `restart` so the following start does not also print "starting".
+    skip_start_notice: bool,
 }
 
 impl Slot {
@@ -119,6 +121,7 @@ impl Slot {
             active_connections: 0,
             last_activity: None,
             idle_generation: 0,
+            skip_start_notice: false,
         }
     }
 }
@@ -231,8 +234,16 @@ impl ProcessManager {
     pub async fn restart(self: &Arc<Self>, name: &str) -> Result<(), RomError> {
         let _guard = self.lifecycle.lock().await;
         self.registry.get(name)?;
-        self.stop_one(name).await?;
-        self.update(name, |slot| slot.restart_count += 1);
+        let label = self.registry.display_label(name).to_owned();
+        self.registry.log.emit(&format!("{label} restarting"));
+        if let Err(error) = self.stop_one(name).await {
+            self.registry.log.emit(&format!("{label} failed: {error}"));
+            return Err(error);
+        }
+        self.update(name, |slot| {
+            slot.restart_count += 1;
+            slot.skip_start_notice = true;
+        });
         let started = self.start_locked(&[name.to_owned()]).await?;
         for started_name in &started {
             self.arm_idle_if_needed(started_name);
@@ -346,10 +357,23 @@ impl ProcessManager {
 
     async fn start_one(&self, name: &str) -> Result<(), RomError> {
         let def = self.registry.get(name)?.clone();
-        self.update(name, |slot| {
+        let announce = {
+            let mut slots = lock(&self.slots);
+            let Some(slot) = slots.get_mut(name) else {
+                return Err(RomError::UnknownService(name.to_owned()));
+            };
+            let announce = !slot.skip_start_notice
+                && slot.state == ServiceState::Sleeping
+                && slot.last_activity.is_some();
+            slot.skip_start_notice = false;
             slot.state = ServiceState::Starting;
             slot.last_error = None;
-        });
+            announce
+        };
+        if announce {
+            let label = self.registry.display_label(name);
+            self.registry.log.emit(&format!("{label} starting"));
+        }
 
         let listen_port = match allocate_listen_port() {
             Ok(port) => port,
@@ -507,9 +531,12 @@ impl ProcessManager {
         if !should_stop {
             return;
         }
-        tracing::info!(service = %name, "stopping idle service");
+        let label = self.registry.display_label(name).to_owned();
         if let Err(error) = self.stop_one(name).await {
+            self.registry.log.emit(&format!("{label} failed: {error}"));
             tracing::warn!(service = %name, %error, "idle stop failed");
+        } else {
+            self.registry.log.emit(&format!("{label} sleeping"));
         }
     }
 
@@ -589,9 +616,11 @@ impl ProcessManager {
         let tree = Arc::new(tree);
         let slots = Arc::clone(&self.slots);
         let service = def.name.clone();
+        let log = self.registry.log;
+        let label = self.registry.display_label(&def.name).to_owned();
         tokio::spawn(async move {
             let status = wait_exit.await;
-            {
+            let crashed = {
                 let mut guard = lock(&slots);
                 if let Some(slot) = guard.get_mut(&service) {
                     let next = match slot.state {
@@ -599,12 +628,19 @@ impl ProcessManager {
                         ServiceState::Running => ServiceState::Crashed,
                         _ => ServiceState::Failed,
                     };
+                    let crashed = next == ServiceState::Crashed;
                     slot.last_error =
                         (next != ServiceState::Sleeping).then(|| describe_exit(&status));
                     slot.state = next;
                     // Dropping the last Arc<ProcessTree> reaps leftover descendants.
                     slot.instance = None;
+                    crashed
+                } else {
+                    false
                 }
+            };
+            if crashed {
+                log.emit(&format!("{label} crashed"));
             }
             let _ = exited_tx.send(true);
         });
@@ -712,6 +748,8 @@ impl ProcessManager {
             slot.state = ServiceState::Failed;
             slot.last_error = Some(error.to_string());
         });
+        let label = self.registry.display_label(name);
+        self.registry.log.emit(&format!("{label} failed: {error}"));
         error
     }
 }

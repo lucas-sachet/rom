@@ -38,6 +38,8 @@ pub struct Registry {
     pub prefix_colors: bool,
     /// Fill the prefix background instead of coloring the letters.
     pub prefix_background: bool,
+    /// How much rom itself prints where it is running.
+    pub log: crate::config::LogLevel,
     pub watch: WatchConfig,
     services: BTreeMap<String, ServiceDef>,
     profiles: BTreeMap<String, Vec<String>>,
@@ -187,6 +189,7 @@ impl Registry {
             connection_idle: config.runtime.connection_idle,
             prefix_colors: config.runtime.prefix_colors,
             prefix_background: config.runtime.prefix_background,
+            log: config.runtime.log,
             watch: config.watch,
             services,
             profiles,
@@ -378,6 +381,19 @@ mod tests {
         ))
         .unwrap();
         assert!(background.prefix_background);
+    }
+
+    #[test]
+    fn log_level_follows_the_yaml() {
+        let dev = build(&config_yaml(&[("api", 3001, "")], "")).unwrap();
+        assert_eq!(dev.log, crate::config::LogLevel::Dev);
+
+        let status = build(&config_yaml(
+            &[("api", 3001, "")],
+            "runtime:\n  log: status\n",
+        ))
+        .unwrap();
+        assert_eq!(status.log, crate::config::LogLevel::Status);
     }
 
     #[test]

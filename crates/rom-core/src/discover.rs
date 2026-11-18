@@ -132,6 +132,7 @@ pub fn render_yaml(discovery: &Discovery) -> String {
     out.push_str("  shutdown_timeout: 30s\n");
     out.push_str("  idle_timeout: 30s\n");
     out.push_str("  connection_idle: 5s\n");
+    out.push_str(crate::config::LOG_YAML_HINT);
     out.push_str(crate::config::PREFIX_COLORS_YAML_HINT);
     out.push('\n');
     out.push_str("watch:\n");
@@ -482,7 +483,9 @@ mod tests {
         assert!(yaml.contains("dependencies: []"));
         assert!(yaml.contains("port: 3001"));
         assert!(yaml.contains("# prefix_colors: true"));
+        assert!(yaml.lines().any(|line| line.trim() == "log: dev"));
         let config: crate::config::Config = serde_yaml_ng::from_str(&yaml).unwrap();
         assert!(!config.runtime.prefix_colors);
+        assert_eq!(config.runtime.log, crate::config::LogLevel::Dev);
     }
 }

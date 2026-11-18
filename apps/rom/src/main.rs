@@ -70,10 +70,12 @@ profiles: {}
 fn config_template() -> String {
     let mut template = String::with_capacity(
         CONFIG_TEMPLATE_HEAD.len()
+            + rom_core::config::LOG_YAML_HINT.len()
             + rom_core::config::PREFIX_COLORS_YAML_HINT.len()
             + CONFIG_TEMPLATE_TAIL.len(),
     );
     template.push_str(CONFIG_TEMPLATE_HEAD);
+    template.push_str(rom_core::config::LOG_YAML_HINT);
     template.push_str(rom_core::config::PREFIX_COLORS_YAML_HINT);
     template.push_str(CONFIG_TEMPLATE_TAIL);
     template
@@ -210,13 +212,6 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_env("ROM_LOG").unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .with_writer(std::io::stderr)
-        .init();
-
     let cli = Cli::parse();
     match cli.command {
         Cmd::Init => init(),
@@ -307,10 +302,13 @@ async fn up(
     };
 
     fs::create_dir_all(project.state_dir.join("logs"))?;
-    println!(
-        "rom up — logs stream here; Ctrl+C stops the daemon and every service ({})",
-        project.config_dir.display()
-    );
+    let log = registry.log;
+    if log.shows_lifecycle() {
+        println!(
+            "rom up — logs stream here; Ctrl+C stops the daemon and every service ({})",
+            project.config_dir.display()
+        );
+    }
 
     let column_names = if names.is_empty() {
         registry.names()
@@ -344,9 +342,11 @@ async fn up(
             }
         }
         if start_names.is_empty() {
-            println!(
-                "daemon ready (no services selected — connect to a public port or `rom start` from another terminal)"
-            );
+            if log.shows_lifecycle() {
+                println!(
+                    "daemon ready (no services selected — connect to a public port or `rom start` from another terminal)"
+                );
+            }
             return Ok::<(), anyhow::Error>(());
         }
         match ipc::request(
@@ -358,10 +358,12 @@ async fn up(
         .await?
         {
             Response::Ok { changed } => {
-                if changed.is_empty() {
-                    println!("already running");
-                } else {
-                    println!("started: {}", changed.join(", "));
+                if log.shows_lifecycle() {
+                    if changed.is_empty() {
+                        println!("already running");
+                    } else {
+                        println!("started: {}", changed.join(", "));
+                    }
                 }
                 Ok(())
             }
@@ -691,6 +693,7 @@ async fn run_daemon_with_shutdown(
     shutdown_tx: watch::Sender<bool>,
 ) -> Result<()> {
     let registry = project.registry()?;
+    install_tracing(registry.log.tracing_directive());
     let manager = ProcessManager::new(registry, &project.state_dir)?;
     let shutdown_rx = shutdown_tx.subscribe();
 
@@ -928,6 +931,16 @@ fn select(
     Ok(services)
 }
 
+/// Installs the process-wide tracing subscriber. `ROM_LOG` wins over `directive`.
+fn install_tracing(directive: &str) {
+    let filter = EnvFilter::try_from_env("ROM_LOG").unwrap_or_else(|_| EnvFilter::new(directive));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .with_target(false)
+        .init();
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -946,6 +959,7 @@ mod tests {
         let template = config_template();
         assert!(template.contains("# prefix_colors: true"));
         assert!(template.contains("# prefix_background: true"));
+        assert!(template.lines().any(|line| line.trim() == "log: dev"));
         assert!(template.contains("transport-request-service:transport-req"));
         assert!(!template.lines().any(|line| {
             let trimmed = line.trim_start();
