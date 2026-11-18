@@ -28,20 +28,9 @@ export const platforms = [
     artifact: 'rom-linux-arm64',
     asset: 'rom-linux-arm64',
   },
-  {
-    os: 'darwin',
-    cpu: 'x64',
-    binary: 'rom',
-    artifact: 'rom-darwin-x64',
-    asset: 'rom-darwin-x64',
-  },
-  {
-    os: 'darwin',
-    cpu: 'arm64',
-    binary: 'rom',
-    artifact: 'rom-darwin-arm64',
-    asset: 'rom-darwin-arm64',
-  },
+  // macOS is not published yet: its runners were not available for the first
+  // release. Add the darwin entries back here, in npm/rom-cli/package.json and
+  // in npm/rom-cli/bin/rom.js, together with a build job in release.yml.
 ];
 
 const repository = {

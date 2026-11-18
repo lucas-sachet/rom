@@ -13,8 +13,6 @@ const { resolveBinary, PACKAGES } = require('../rom-cli/bin/rom.js');
 
 test('wrapper lists every platform the release publishes', () => {
   assert.deepEqual(Object.keys(PACKAGES).sort(), [
-    'darwin arm64',
-    'darwin x64',
     'linux arm64',
     'linux x64',
     'win32 x64',
@@ -43,7 +41,6 @@ test('wrapper resolves and runs the binary installed beside rom-cli', (t) => {
   try {
     assert.equal(resolveBinary().exe, path.join(installed, 'rom.exe'));
     assert.ok(PACKAGES['linux x64']);
-    assert.ok(PACKAGES['darwin arm64']);
     const result = spawnSync(process.execPath, [path.join(packageDir, 'bin', 'rom.js'), '--version'], {
       encoding: 'utf8',
     });

@@ -2,7 +2,7 @@
 
 **Runtime Orchestrator for Microservices.** A local runtime that starts Node.js microservices on demand, stops them when they are idle, and keeps development machines light.
 
-> Status: Windows, Linux and macOS are supported. Design decisions are in [docs/decisions.md](docs/decisions.md).
+> Status: Windows and Linux are supported by the npm package. macOS builds from source for now. Design decisions are in [docs/decisions.md](docs/decisions.md).
 
 **New here?** [Install + first steps](docs/getting-started.md).
 
@@ -14,7 +14,7 @@ Running dozens of services with `nodemon` and `concurrently` means dozens of wat
 
 ## Requirements
 
-- Windows 10/11 x64, Linux x64 or arm64, or macOS x64 or arm64
+- Windows 10/11 x64 or Linux x64 or arm64 for the npm package. macOS: build from source (Rust 1.85+).
 - Node.js 18+ to install `rom` and to run Node services
 
 Rust 1.85+ is only needed to build rom from source. On Windows the daemon uses Job Objects and named pipes. On Unix it uses process groups and a socket under `$XDG_RUNTIME_DIR` (or the system temp dir).
@@ -125,7 +125,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The workflow builds Windows x64, Linux x64 (musl), Linux arm64 (musl), macOS x64 and macOS arm64. It creates a GitHub Release with those binaries and publishes `rom-cli` plus one optional package per platform. `npm install -g rom-cli` installs only the package for the current machine and exposes the `rom` command.
+The workflow builds Windows x64, Linux x64 (musl) and Linux arm64 (musl). It creates a GitHub Release with those binaries and publishes `rom-cli` plus one optional package per platform. `npm install -g rom-cli` installs only the package for the current machine and exposes the `rom` command. macOS is left out of this release: its GitHub runners were not available. It returns as a later version.
 
 A manual run of the Release workflow (Actions → Release → Run workflow) only builds. It publishes when the run comes from a version tag.
 

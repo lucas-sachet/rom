@@ -9,8 +9,6 @@ const PACKAGES = {
   'win32 x64': ['rom-cli-win32-x64', 'rom.exe'],
   'linux x64': ['rom-cli-linux-x64', 'rom'],
   'linux arm64': ['rom-cli-linux-arm64', 'rom'],
-  'darwin x64': ['rom-cli-darwin-x64', 'rom'],
-  'darwin arm64': ['rom-cli-darwin-arm64', 'rom'],
 };
 
 function resolveBinary() {

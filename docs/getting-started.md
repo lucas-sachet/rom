@@ -6,7 +6,7 @@ Install the CLI, point it at a monorepo, then start only the services you need.
 
 ### Requirements
 
-- **OS:** Windows 10/11 x64, Linux x64 or arm64, or macOS x64 or arm64
+- **OS:** Windows 10/11 x64 or Linux x64 or arm64 for the npm package. On macOS, build from source.
 - **Node.js:** 18 or newer. This installs the `rom` command and runs your services.
 
 Rust is only required if you build rom from source.
