@@ -305,29 +305,29 @@ pub fn map_path_to_service(services: &BTreeMap<String, PathBuf>, path: &Path) ->
 mod tests {
     use super::*;
 
+    // Forward slashes parse as separators on every platform, so these run the
+    // same on Windows, Linux and macOS.
+
     #[test]
     fn ignores_node_modules_segments() {
         assert!(is_ignored_path(Path::new(
-            r"L:\proj\api\node_modules\x\index.js"
+            "proj/api/node_modules/x/index.js"
         )));
-        assert!(is_ignored_path(Path::new(r"L:\proj\.git\HEAD")));
-        assert!(!is_ignored_path(Path::new(r"L:\proj\api\src\index.js")));
+        assert!(is_ignored_path(Path::new("proj/.git/HEAD")));
+        assert!(!is_ignored_path(Path::new("proj/api/src/index.js")));
     }
 
     #[test]
     fn picks_longest_service_prefix() {
         let mut services = BTreeMap::new();
-        services.insert("api".to_owned(), PathBuf::from(r"L:\proj\api"));
-        services.insert(
-            "api-worker".to_owned(),
-            PathBuf::from(r"L:\proj\api\worker"),
-        );
+        services.insert("api".to_owned(), PathBuf::from("proj/api"));
+        services.insert("api-worker".to_owned(), PathBuf::from("proj/api/worker"));
         assert_eq!(
-            map_path_to_service(&services, Path::new(r"L:\proj\api\worker\main.js")).as_deref(),
+            map_path_to_service(&services, Path::new("proj/api/worker/main.js")).as_deref(),
             Some("api-worker")
         );
         assert_eq!(
-            map_path_to_service(&services, Path::new(r"L:\proj\api\src\main.js")).as_deref(),
+            map_path_to_service(&services, Path::new("proj/api/src/main.js")).as_deref(),
             Some("api")
         );
     }

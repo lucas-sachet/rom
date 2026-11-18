@@ -137,6 +137,7 @@ mod windows {
 
 #[cfg(unix)]
 mod unix {
+    #[cfg(target_os = "linux")]
     use std::fs;
     use std::io;
     use std::time::Duration;
