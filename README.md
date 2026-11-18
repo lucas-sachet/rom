@@ -49,12 +49,15 @@ runtime:
   idle_timeout: 30s             # stop on-demand services with no proxied connections
   connection_idle: 5s           # close keep-alive with no bytes either way
   # Color only the [service] prefix in `rom up`, like concurrently.
+  # The letters are colored. `prefix_background` fills the background instead,
+  # and only applies when prefix colors are on.
   # Prefixes share one width: the longest name in this run, capped at 20.
   # The cap is used only when a name is longer than that. Shorter names are
   # padded; longer ones compact to `sta..end`. The log text itself is not colored.
   # Has no effect when stdout is not a terminal or when NO_COLOR is set.
   # Uncomment to enable:
   # prefix_colors: true
+  # prefix_background: true
 
 watch:
   debounce: 300ms               # min time from first change before restart
@@ -95,7 +98,7 @@ Notes:
 - A connection to a sleeping service starts it (and its yaml dependencies) once; concurrent clients share that start.
 - On-demand services stop after `idle_timeout` with no open proxied connections. Quiet keep-alives are closed after `connection_idle` and do not keep the service busy. `mode: persistent` never idle-stops.
 - One project watcher restarts **running** services when their files change (`node_modules`, `.git`, `dist`, … are not watched). Sleeping services stay asleep. A `.git/index.lock` pauses reloads.
-- `runtime.prefix_colors` (off unless uncommented) paints only the `[service]` tag in `rom up`. The shared width is the longest name in that run, capped at 20: the cap applies only when a name is longer than 20. Shorter names are padded and longer ones compact to `sta..end`, so the log text always starts in the same column. Each service keeps one background color; the log line is printed as the process wrote it.
+- `runtime.prefix_colors` (off unless uncommented) paints only the `[service]` tag in `rom up`. The letters use basic ANSI colors, so your terminal theme sets the exact shade. Each service in a run gets its own color, repeating only after the 12th. `runtime.prefix_background` fills that tag's background with the same hues, and only applies while prefix colors are on. The shared width is the longest name in that run, capped at 20: the cap applies only when a name is longer than 20. Shorter names are padded and longer ones compact to `sta..end`, so the log text always starts in the same column. The log line is printed as the process wrote it.
 - A profile entry `service:label` (no space around `:`) shows `label` in that tag. Without `:label`, the service name is shown. `rom start` and `rom stop` still use the real service name. The label follows the same width rule.
 - Design notes for the gateway, idle detection and shutdown are in [docs/decisions.md](docs/decisions.md).
 - Service directories are used as-is. Each service keeps its own `node_modules`.

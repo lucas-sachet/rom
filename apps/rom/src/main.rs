@@ -312,15 +312,17 @@ async fn up(
         project.config_dir.display()
     );
 
-    let service_names = registry.names();
     let column_names = if names.is_empty() {
-        service_names.clone()
+        registry.names()
     } else {
         names.clone()
     };
     let labels = registry.labels().clone();
-    let use_color = registry.prefix_colors && stdout_supports_color();
-    if use_color {
+    let paint = prefix_paint(
+        registry.prefix_colors && stdout_supports_color(),
+        registry.prefix_background,
+    );
+    if paint != PrefixPaint::Plain {
         console::enable_ansi_stdout();
     }
 
@@ -328,15 +330,7 @@ async fn up(
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let tail_shutdown = shutdown_rx.clone();
     let tail = tokio::spawn(async move {
-        follow_log_dir(
-            log_dir,
-            tail_shutdown,
-            service_names,
-            column_names,
-            labels,
-            use_color,
-        )
-        .await
+        follow_log_dir(log_dir, tail_shutdown, column_names, labels, paint).await
     });
 
     let start_names = names.clone();
@@ -382,9 +376,26 @@ async fn up(
     result
 }
 
-/// Concurrently-style prefix colors. Bold text on a background, chosen for contrast.
-/// Applied only to `[service]`; the caller prints the reset before the log text.
-const PREFIX_STYLES: &[&str] = &[
+/// Letter colors for the `[service]` prefix. Basic ANSI colors, so the terminal
+/// theme sets the exact shade and the result stays soft. The first 12 services
+/// of a run each get their own color; the list repeats only after that.
+const PREFIX_FG: &[&str] = &[
+    "\u{1b}[1;94m", // bright blue
+    "\u{1b}[1;95m", // bright magenta
+    "\u{1b}[1;96m", // bright cyan
+    "\u{1b}[1;92m", // bright green
+    "\u{1b}[1;93m", // bright yellow
+    "\u{1b}[1;91m", // bright red
+    "\u{1b}[1;97m", // bright white
+    "\u{1b}[1;34m", // blue
+    "\u{1b}[1;35m", // magenta
+    "\u{1b}[1;36m", // cyan
+    "\u{1b}[1;32m", // green
+    "\u{1b}[1;33m", // yellow
+];
+
+/// Background colors for the prefix. Used only when `prefix_background` is set.
+const PREFIX_BG: &[&str] = &[
     "\u{1b}[1;97;44m",  // white on blue
     "\u{1b}[1;97;45m",  // white on magenta
     "\u{1b}[1;30;46m",  // black on cyan
@@ -399,6 +410,23 @@ const PREFIX_STYLES: &[&str] = &[
     "\u{1b}[1;30;103m", // black on bright yellow
 ];
 const RESET: &str = "\u{1b}[0m";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PrefixPaint {
+    Plain,
+    Letters,
+    Background,
+}
+
+fn prefix_paint(colors: bool, background: bool) -> PrefixPaint {
+    if !colors {
+        PrefixPaint::Plain
+    } else if background {
+        PrefixPaint::Background
+    } else {
+        PrefixPaint::Letters
+    }
+}
 
 fn stdout_supports_color() -> bool {
     if std::env::var_os("NO_COLOR").is_some() {
@@ -417,16 +445,14 @@ const PREFIX_MAX_WIDTH: usize = 20;
 fn format_service_line(
     name: &str,
     line: &str,
-    color_names: &[String],
     column_names: &[String],
     labels: &BTreeMap<String, String>,
-    use_color: bool,
+    paint: PrefixPaint,
 ) -> String {
     let shown = labels.get(name).map(String::as_str).unwrap_or(name);
-    if !use_color {
+    let Some(style) = prefix_style(name, column_names, paint) else {
         return format!("[{shown}] {line}");
-    }
-    let style = prefix_style(name, color_names);
+    };
     let label = align_prefix(shown, prefix_width(column_names, labels));
     format!("{style}[{label}]{RESET} {line}")
 }
@@ -476,12 +502,17 @@ fn compact_name(name: &str, width: usize) -> String {
     format!("{beginning}..{end}")
 }
 
-fn prefix_style(name: &str, names: &[String]) -> &'static str {
+fn prefix_style(name: &str, names: &[String], paint: PrefixPaint) -> Option<&'static str> {
+    let palette = match paint {
+        PrefixPaint::Plain => return None,
+        PrefixPaint::Letters => PREFIX_FG,
+        PrefixPaint::Background => PREFIX_BG,
+    };
     let index = names
         .iter()
         .position(|candidate| candidate == name)
         .unwrap_or_else(|| name_slot(name));
-    PREFIX_STYLES[index % PREFIX_STYLES.len()]
+    Some(palette[index % palette.len()])
 }
 
 fn name_slot(name: &str) -> usize {
@@ -493,10 +524,9 @@ fn name_slot(name: &str) -> usize {
 async fn follow_log_dir(
     log_dir: PathBuf,
     mut shutdown: watch::Receiver<bool>,
-    names: Vec<String>,
     column_names: Vec<String>,
     labels: BTreeMap<String, String>,
-    use_color: bool,
+    paint: PrefixPaint,
 ) {
     use std::collections::HashMap;
     use std::io::{Read, Seek, SeekFrom};
@@ -540,7 +570,7 @@ async fn follow_log_dir(
                 for line in chunk.lines() {
                     println!(
                         "{}",
-                        format_service_line(&name, line, &names, &column_names, &labels, use_color)
+                        format_service_line(&name, line, &column_names, &labels, paint)
                     );
                 }
             }
@@ -902,38 +932,52 @@ fn select(
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{PREFIX_MAX_WIDTH, PREFIX_STYLES, RESET, config_template, format_service_line};
+    use super::{
+        PREFIX_BG, PREFIX_FG, PREFIX_MAX_WIDTH, PrefixPaint, RESET, config_template,
+        format_service_line,
+    };
 
-    fn plain(name: &str, text: &str, names: &[String], use_color: bool) -> String {
-        format_service_line(name, text, names, names, &BTreeMap::new(), use_color)
+    fn line(name: &str, text: &str, names: &[String], paint: PrefixPaint) -> String {
+        format_service_line(name, text, names, &BTreeMap::new(), paint)
     }
 
     #[test]
     fn init_template_leaves_prefix_colors_commented() {
         let template = config_template();
         assert!(template.contains("# prefix_colors: true"));
+        assert!(template.contains("# prefix_background: true"));
         assert!(template.contains("transport-request-service:transport-req"));
-        assert!(
-            !template
-                .lines()
-                .any(|line| line.trim_start().starts_with("prefix_colors:"))
-        );
+        assert!(!template.lines().any(|line| {
+            let trimmed = line.trim_start();
+            trimmed.starts_with("prefix_colors:") || trimmed.starts_with("prefix_background:")
+        }));
     }
 
     #[test]
     fn colored_prefix_does_not_paint_the_log_text() {
         let names = vec!["notification".to_owned(), "dashboard".to_owned()];
-        let line = plain("notification", "\u{1b}[32mready\u{1b}[0m", &names, true);
+        let line = line(
+            "notification",
+            "\u{1b}[32mready\u{1b}[0m",
+            &names,
+            PrefixPaint::Letters,
+        );
         let (prefix, rest) = line.split_once(RESET).unwrap();
-        assert_eq!(prefix, format!("{}[notification]", PREFIX_STYLES[0]));
+        assert_eq!(prefix, format!("{}[notification]", PREFIX_FG[0]));
         assert_eq!(rest, " \u{1b}[32mready\u{1b}[0m");
+        assert!(!prefix.contains(";44m"));
     }
 
     #[test]
     fn plain_prefix_when_colors_are_off() {
         let names = vec!["product-structure-service".to_owned(), "api".to_owned()];
         assert_eq!(
-            plain("product-structure-service", "ready", &names, false),
+            line(
+                "product-structure-service",
+                "ready",
+                &names,
+                PrefixPaint::Plain
+            ),
             "[product-structure-service] ready"
         );
     }
@@ -941,8 +985,8 @@ mod tests {
     #[test]
     fn colored_prefixes_share_one_column() {
         let names = vec!["notification".to_owned(), "fleet".to_owned()];
-        let long = plain("notification", "a", &names, true);
-        let short = plain("fleet", "b", &names, true);
+        let long = line("notification", "a", &names, PrefixPaint::Letters);
+        let short = line("fleet", "b", &names, PrefixPaint::Letters);
         assert!(long.contains("[notification]"));
         assert!(short.contains("[fleet       ]"));
         assert_eq!(long.split_once(RESET).unwrap().1, " a");
@@ -956,9 +1000,14 @@ mod tests {
             "product-stock-service".to_owned(),
             "api".to_owned(),
         ];
-        let structure = plain("product-structure-service", "up", &names, true);
-        let stock = plain("product-stock-service", "up", &names, true);
-        let api = plain("api", "up", &names, true);
+        let structure = line(
+            "product-structure-service",
+            "up",
+            &names,
+            PrefixPaint::Letters,
+        );
+        let stock = line("product-stock-service", "up", &names, PrefixPaint::Letters);
+        let api = line("api", "up", &names, PrefixPaint::Letters);
         assert!(structure.contains("[product-s..e-service]"));
         assert!(stock.contains("[product-s..k-service]"));
         assert!(api.contains("[api                 ]"));
@@ -981,34 +1030,28 @@ mod tests {
             "transport-request-service".to_owned(),
             "transport-req".to_owned(),
         );
-        let user = format_service_line("user-service", "up", &names, &names, &labels, true);
+        let user = format_service_line("user-service", "up", &names, &labels, PrefixPaint::Letters);
         let request = format_service_line(
             "transport-request-service",
             "up",
             &names,
-            &names,
             &labels,
-            true,
+            PrefixPaint::Letters,
         );
         let user_tag = tag(&user);
         let request_tag = tag(&request);
         assert_eq!(user_tag.trim(), "user");
         assert_eq!(request_tag.trim(), "transport-req");
         assert_eq!(user_tag.chars().count(), request_tag.chars().count());
-        assert!(user.starts_with(PREFIX_STYLES[0]));
+        assert!(user.starts_with(PREFIX_FG[0]));
         assert_eq!(
-            format_service_line("user-service", "up", &names, &names, &labels, false),
+            format_service_line("user-service", "up", &names, &labels, PrefixPaint::Plain),
             "[user] up"
         );
     }
 
     #[test]
     fn column_stays_at_the_longest_visible_name() {
-        let color_names = vec![
-            "product-structure-service".to_owned(),
-            "user-service".to_owned(),
-            "transport-request-service".to_owned(),
-        ];
         let column_names = vec![
             "user-service".to_owned(),
             "transport-request-service".to_owned(),
@@ -1022,18 +1065,16 @@ mod tests {
         let user = format_service_line(
             "user-service",
             "up",
-            &color_names,
             &column_names,
             &labels,
-            true,
+            PrefixPaint::Letters,
         );
         let request = format_service_line(
             "transport-request-service",
             "up",
-            &color_names,
             &column_names,
             &labels,
-            true,
+            PrefixPaint::Letters,
         );
         assert_eq!(tag(&user).trim(), "user");
         assert_eq!(tag(&request).trim(), "transport-request");
@@ -1051,11 +1092,36 @@ mod tests {
     #[test]
     fn each_service_keeps_the_same_color() {
         let names = vec!["a".to_owned(), "b".to_owned()];
-        let first = plain("b", "one", &names, true);
-        let again = plain("b", "two", &names, true);
-        assert!(first.starts_with(PREFIX_STYLES[1]));
-        assert!(again.starts_with(PREFIX_STYLES[1]));
-        let other = plain("a", "x", &names, true);
-        assert!(other.starts_with(PREFIX_STYLES[0]));
+        let first = line("b", "one", &names, PrefixPaint::Letters);
+        let again = line("b", "two", &names, PrefixPaint::Letters);
+        assert!(first.starts_with(PREFIX_FG[1]));
+        assert!(again.starts_with(PREFIX_FG[1]));
+        let other = line("a", "x", &names, PrefixPaint::Letters);
+        assert!(other.starts_with(PREFIX_FG[0]));
+    }
+
+    #[test]
+    fn background_flag_paints_the_block_instead_of_the_letters() {
+        let names = vec!["notification".to_owned()];
+        let letters = line("notification", "ready", &names, PrefixPaint::Letters);
+        let background = line("notification", "ready", &names, PrefixPaint::Background);
+        assert!(letters.starts_with(PREFIX_FG[0]));
+        assert!(background.starts_with(PREFIX_BG[0]));
+        assert_eq!(PREFIX_FG.len(), PREFIX_BG.len());
+        assert!(PREFIX_FG.len() >= 12);
+        assert_eq!(
+            letters.split_once(RESET).unwrap().1,
+            background.split_once(RESET).unwrap().1
+        );
+    }
+
+    #[test]
+    fn colors_follow_the_services_in_this_run() {
+        let run = vec!["arrival-service".to_owned(), "company-service".to_owned()];
+        let arrival = line("arrival-service", "up", &run, PrefixPaint::Letters);
+        let company = line("company-service", "up", &run, PrefixPaint::Letters);
+        assert!(arrival.starts_with(PREFIX_FG[0]));
+        assert!(company.starts_with(PREFIX_FG[1]));
+        assert_ne!(PREFIX_FG[0], PREFIX_FG[1]);
     }
 }

@@ -48,17 +48,23 @@ pub struct Runtime {
     pub connection_idle: Duration,
     /// When true, `rom up` colors only the `[service]` prefix. Log text is not recolored.
     pub prefix_colors: bool,
+    /// When true, and `prefix_colors` is on, the prefix color fills the background.
+    /// Otherwise the letters are colored.
+    pub prefix_background: bool,
 }
 
 /// Commented hint inserted into generated `rom.yaml` files. Kept commented so
 /// prefix colors stay off until someone opts in.
 pub const PREFIX_COLORS_YAML_HINT: &str = r#"  # Color only the [service] prefix in `rom up`, like concurrently.
+  # The letters are colored. `prefix_background` fills the background instead,
+  # and only applies when prefix colors are on.
   # Prefixes share one width: the longest name in this run, capped at 20.
   # The cap is used only when a name is longer than that. Shorter names are
   # padded; longer ones compact to `sta..end`. The log text itself is not colored.
   # Has no effect when stdout is not a terminal or when NO_COLOR is set.
   # Uncomment to enable:
   # prefix_colors: true
+  # prefix_background: true
 "#;
 
 impl Default for Runtime {
@@ -69,6 +75,7 @@ impl Default for Runtime {
             idle_timeout: Duration::from_secs(30),
             connection_idle: Duration::from_secs(5),
             prefix_colors: false,
+            prefix_background: false,
         }
     }
 }
@@ -203,23 +210,32 @@ mod tests {
         let off: Config =
             serde_yaml_ng::from_str("version: 1\nproject:\n  name: t\nservices: {}\n").unwrap();
         assert!(!off.runtime.prefix_colors);
+        assert!(!off.runtime.prefix_background);
 
         let hinted = format!(
             "version: 1\nproject:\n  name: t\nruntime:\n  startup_timeout: 30s\n{PREFIX_COLORS_YAML_HINT}services: {{}}\n"
         );
         let from_hint: Config = serde_yaml_ng::from_str(&hinted).unwrap();
         assert!(!from_hint.runtime.prefix_colors);
+        assert!(!from_hint.runtime.prefix_background);
         assert!(PREFIX_COLORS_YAML_HINT.contains("# prefix_colors: true"));
-        assert!(
-            !PREFIX_COLORS_YAML_HINT
-                .lines()
-                .any(|line| line.trim_start().starts_with("prefix_colors:"))
-        );
+        assert!(PREFIX_COLORS_YAML_HINT.contains("# prefix_background: true"));
+        assert!(!PREFIX_COLORS_YAML_HINT.lines().any(|line| {
+            let trimmed = line.trim_start();
+            trimmed.starts_with("prefix_colors:") || trimmed.starts_with("prefix_background:")
+        }));
 
-        let on: Config = serde_yaml_ng::from_str(
+        let letters: Config = serde_yaml_ng::from_str(
             "version: 1\nproject:\n  name: t\nruntime:\n  prefix_colors: true\nservices: {}\n",
         )
         .unwrap();
-        assert!(on.runtime.prefix_colors);
+        assert!(letters.runtime.prefix_colors);
+        assert!(!letters.runtime.prefix_background);
+
+        let background: Config = serde_yaml_ng::from_str(
+            "version: 1\nproject:\n  name: t\nruntime:\n  prefix_colors: true\n  prefix_background: true\nservices: {}\n",
+        )
+        .unwrap();
+        assert!(background.runtime.prefix_background);
     }
 }

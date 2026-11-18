@@ -36,6 +36,8 @@ pub struct Registry {
     pub connection_idle: Duration,
     /// Color only the `[service]` prefix when streaming logs (`rom up`).
     pub prefix_colors: bool,
+    /// Fill the prefix background instead of coloring the letters.
+    pub prefix_background: bool,
     pub watch: WatchConfig,
     services: BTreeMap<String, ServiceDef>,
     profiles: BTreeMap<String, Vec<String>>,
@@ -184,6 +186,7 @@ impl Registry {
             idle_timeout: config.runtime.idle_timeout,
             connection_idle: config.runtime.connection_idle,
             prefix_colors: config.runtime.prefix_colors,
+            prefix_background: config.runtime.prefix_background,
             watch: config.watch,
             services,
             profiles,
@@ -367,6 +370,14 @@ mod tests {
         ))
         .unwrap();
         assert!(on.prefix_colors);
+        assert!(!on.prefix_background);
+
+        let background = build(&config_yaml(
+            &[("api", 3001, "")],
+            "runtime:\n  prefix_colors: true\n  prefix_background: true\n",
+        ))
+        .unwrap();
+        assert!(background.prefix_background);
     }
 
     #[test]
