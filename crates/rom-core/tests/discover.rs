@@ -22,8 +22,11 @@ fn discovers_node_services_with_ports_and_leaves_dependencies_empty() {
 
     let user = root.join("services").join("user-service");
     fs::create_dir_all(&user).unwrap();
-    fs::write(user.join("package.json"), r#"{"name":"user-service","scripts":{"start":"node server.js"}}"#)
-        .unwrap();
+    fs::write(
+        user.join("package.json"),
+        r#"{"name":"user-service","scripts":{"start":"node server.js"}}"#,
+    )
+    .unwrap();
     fs::write(
         user.join("server.js"),
         "const http = require('http');\nhttp.createServer().listen(process.env.PORT || 3001);\n",
@@ -32,7 +35,11 @@ fn discovers_node_services_with_ports_and_leaves_dependencies_empty() {
 
     let finance = root.join("services").join("finance-service");
     fs::create_dir_all(&finance).unwrap();
-    fs::write(finance.join("package.json"), r#"{"name":"finance-service"}"#).unwrap();
+    fs::write(
+        finance.join("package.json"),
+        r#"{"name":"finance-service"}"#,
+    )
+    .unwrap();
     fs::write(
         finance.join("server.ts"),
         "const port = process.env.PORT ?? 3002;\n",
@@ -53,7 +60,12 @@ fn discovers_node_services_with_ports_and_leaves_dependencies_empty() {
 
     let discovery = scan(&root).expect("scan succeeds");
     assert_eq!(discovery.services.len(), 2);
-    assert!(discovery.skipped.iter().any(|s| s.contains("orphan-service")));
+    assert!(
+        discovery
+            .skipped
+            .iter()
+            .any(|s| s.contains("orphan-service"))
+    );
 
     let user_svc = discovery
         .services

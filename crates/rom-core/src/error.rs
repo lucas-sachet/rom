@@ -22,10 +22,14 @@ pub enum RomError {
     #[error("unknown profile `{0}`")]
     UnknownProfile(String),
 
-    #[error("`{service}` is still required by running services: {dependents} (stop them first or use --force)")]
+    #[error(
+        "`{service}` is still required by running services: {dependents} (stop them first or use --force)"
+    )]
     StillRequired { service: String, dependents: String },
 
-    #[error("cannot run `{command}` for `{service}`: {source}. Note: `.cmd` shims such as npm or ts-node cannot be spawned directly; use `node` and pass the script in `args`")]
+    #[error(
+        "cannot run `{command}` for `{service}`: {source}. Note: `.cmd` shims such as npm or ts-node cannot be spawned directly; use `node` and pass the script in `args`"
+    )]
     Spawn {
         service: String,
         command: String,

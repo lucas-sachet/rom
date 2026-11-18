@@ -16,10 +16,12 @@ use std::path::Path;
 use std::process::ExitStatus;
 use std::ptr::null;
 
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation, WAIT_OBJECT_0};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation, WAIT_OBJECT_0,
+};
 use windows_sys::Win32::System::Threading::{
-    CREATE_NEW_CONSOLE, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, GetExitCodeProcess,
-    INFINITE, PROCESS_INFORMATION, STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES, STARTUPINFOW,
+    CREATE_NEW_CONSOLE, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, GetExitCodeProcess, INFINITE,
+    PROCESS_INFORMATION, STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES, STARTUPINFOW,
     TerminateProcess, WaitForSingleObject,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
@@ -86,7 +88,10 @@ pub fn spawn_hidden(
     log_path: &Path,
     extra_env: &BTreeMap<String, String>,
 ) -> io::Result<HiddenConsoleChild> {
-    let log = OpenOptions::new().create(true).append(true).open(log_path)?;
+    let log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)?;
     let log_handle = log.as_raw_handle() as HANDLE;
     let stdin = OpenOptions::new().read(true).write(true).open("NUL")?;
     let stdin_handle = stdin.as_raw_handle() as HANDLE;
@@ -97,10 +102,12 @@ pub fn spawn_hidden(
         }
     }
 
-    let mut command_line = wide(&std::iter::once(quote_arg(command))
-        .chain(args.iter().map(|arg| quote_arg(arg)))
-        .collect::<Vec<_>>()
-        .join(" "));
+    let mut command_line = wide(
+        &std::iter::once(quote_arg(command))
+            .chain(args.iter().map(|arg| quote_arg(arg)))
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
     let current_dir = wide_os(cwd.as_os_str());
     let mut env = env_block(extra_env);
 

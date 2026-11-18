@@ -1,5 +1,5 @@
 use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom, Write, stdout};
+use std::io::{IsTerminal, Read, Seek, SeekFrom, Write, stdout};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,7 +21,7 @@ use tokio::sync::watch;
 use tokio::time::sleep;
 use tracing_subscriber::EnvFilter;
 
-const CONFIG_TEMPLATE: &str = r#"version: 1
+const CONFIG_TEMPLATE_HEAD: &str = r#"version: 1
 
 project:
   name: {{PROJECT}}
@@ -32,7 +32,9 @@ runtime:
   shutdown_timeout: 30s
   idle_timeout: 30s
   connection_idle: 5s
+"#;
 
+const CONFIG_TEMPLATE_TAIL: &str = r#"
 watch:
   debounce: 300ms
   settle: 500ms
@@ -55,8 +57,24 @@ services: {}
 profiles: {}
 "#;
 
+fn config_template() -> String {
+    let mut template = String::with_capacity(
+        CONFIG_TEMPLATE_HEAD.len()
+            + rom_core::config::PREFIX_COLORS_YAML_HINT.len()
+            + CONFIG_TEMPLATE_TAIL.len(),
+    );
+    template.push_str(CONFIG_TEMPLATE_HEAD);
+    template.push_str(rom_core::config::PREFIX_COLORS_YAML_HINT);
+    template.push_str(CONFIG_TEMPLATE_TAIL);
+    template
+}
+
 #[derive(Parser)]
-#[command(name = "rom", version, about = "Runtime Orchestrator for Microservices")]
+#[command(
+    name = "rom",
+    version,
+    about = "Runtime Orchestrator for Microservices"
+)]
 struct Cli {
     /// Path to rom.yaml. Defaults to the nearest rom.yaml in the current directory or its parents.
     #[arg(long, global = true)]
@@ -154,7 +172,8 @@ impl Project {
             Some(path) => std::path::absolute(path)?,
             None => {
                 let cwd = std::env::current_dir()?;
-                find_config(&cwd).ok_or_else(|| RomError::ConfigNotFound(cwd.display().to_string()))?
+                find_config(&cwd)
+                    .ok_or_else(|| RomError::ConfigNotFound(cwd.display().to_string()))?
             }
         };
         let config_dir = config_path
@@ -182,7 +201,9 @@ async fn main() -> Result<()> {
     }
 
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_env("ROM_LOG").unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_env_filter(
+            EnvFilter::try_from_env("ROM_LOG").unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .with_writer(std::io::stderr)
         .init();
 
@@ -214,11 +235,11 @@ fn init() -> Result<()> {
     if path.exists() {
         bail!("{} already exists", path.display());
     }
-    let name = path
-        .parent()
-        .and_then(Path::file_name)
-        .map_or_else(|| "my-project".to_owned(), |n| n.to_string_lossy().into_owned());
-    fs::write(&path, CONFIG_TEMPLATE.replace("{{PROJECT}}", &name))?;
+    let name = path.parent().and_then(Path::file_name).map_or_else(
+        || "my-project".to_owned(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    fs::write(&path, config_template().replace("{{PROJECT}}", &name))?;
     println!("created {}", path.display());
     Ok(())
 }
@@ -281,10 +302,18 @@ async fn up(
         project.config_dir.display()
     );
 
+    let service_names = registry.names();
+    let use_color = registry.prefix_colors && stdout_supports_color();
+    if use_color {
+        console::enable_ansi_stdout();
+    }
+
     let log_dir = project.state_dir.join("logs");
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let tail_shutdown = shutdown_rx.clone();
-    let tail = tokio::spawn(async move { follow_log_dir(log_dir, tail_shutdown).await });
+    let tail = tokio::spawn(async move {
+        follow_log_dir(log_dir, tail_shutdown, service_names, use_color).await
+    });
 
     let start_names = names.clone();
     let start_pipe = project.pipe.clone();
@@ -297,7 +326,9 @@ async fn up(
             }
         }
         if start_names.is_empty() {
-            println!("daemon ready (no services selected — connect to a public port or `rom start` from another terminal)");
+            println!(
+                "daemon ready (no services selected — connect to a public port or `rom start` from another terminal)"
+            );
             return Ok::<(), anyhow::Error>(());
         }
         match ipc::request(
@@ -327,7 +358,62 @@ async fn up(
     result
 }
 
-async fn follow_log_dir(log_dir: PathBuf, mut shutdown: watch::Receiver<bool>) {
+/// Concurrently-style prefix colors. Bold text on a background, chosen for contrast.
+/// Applied only to `[service]`; the caller prints the reset before the log text.
+const PREFIX_STYLES: &[&str] = &[
+    "\u{1b}[1;97;44m",  // white on blue
+    "\u{1b}[1;97;45m",  // white on magenta
+    "\u{1b}[1;30;46m",  // black on cyan
+    "\u{1b}[1;30;42m",  // black on green
+    "\u{1b}[1;30;43m",  // black on yellow
+    "\u{1b}[1;97;41m",  // white on red
+    "\u{1b}[1;30;47m",  // black on white
+    "\u{1b}[1;97;104m", // white on bright blue
+    "\u{1b}[1;30;105m", // black on bright magenta
+    "\u{1b}[1;30;106m", // black on bright cyan
+    "\u{1b}[1;30;102m", // black on bright green
+    "\u{1b}[1;30;103m", // black on bright yellow
+];
+const RESET: &str = "\u{1b}[0m";
+
+fn stdout_supports_color() -> bool {
+    if std::env::var_os("NO_COLOR").is_some() {
+        return false;
+    }
+    if std::env::var("TERM").ok().as_deref() == Some("dumb") {
+        return false;
+    }
+    stdout().is_terminal()
+}
+
+fn format_service_line(name: &str, line: &str, names: &[String], use_color: bool) -> String {
+    if !use_color {
+        return format!("[{name}] {line}");
+    }
+    let style = prefix_style(name, names);
+    format!("{style}[{name}]{RESET} {line}")
+}
+
+fn prefix_style(name: &str, names: &[String]) -> &'static str {
+    let index = names
+        .iter()
+        .position(|candidate| candidate == name)
+        .unwrap_or_else(|| name_slot(name));
+    PREFIX_STYLES[index % PREFIX_STYLES.len()]
+}
+
+fn name_slot(name: &str) -> usize {
+    name.bytes().fold(0usize, |acc, byte| {
+        acc.wrapping_mul(31).wrapping_add(usize::from(byte))
+    })
+}
+
+async fn follow_log_dir(
+    log_dir: PathBuf,
+    mut shutdown: watch::Receiver<bool>,
+    names: Vec<String>,
+    use_color: bool,
+) {
     use std::collections::HashMap;
     use std::io::{Read, Seek, SeekFrom};
 
@@ -368,7 +454,7 @@ async fn follow_log_dir(log_dir: PathBuf, mut shutdown: watch::Receiver<bool>) {
                 }
                 *pos = len;
                 for line in chunk.lines() {
-                    println!("[{name}] {line}");
+                    println!("{}", format_service_line(&name, line, &names, use_color));
                 }
             }
         }
@@ -423,7 +509,14 @@ async fn run(project: &Project, command: Cmd) -> Result<()> {
                 println!("daemon is not running; nothing to stop");
                 return Ok(());
             }
-            let stopped = send(project, Request::Stop { services: names, force }).await?;
+            let stopped = send(
+                project,
+                Request::Stop {
+                    services: names,
+                    force,
+                },
+            )
+            .await?;
             if stopped.is_empty() {
                 println!("nothing was running");
             } else {
@@ -433,7 +526,13 @@ async fn run(project: &Project, command: Cmd) -> Result<()> {
         Cmd::Restart { service } => {
             project.registry()?.get(&service)?;
             ensure_daemon(project).await?;
-            send(project, Request::Restart { service: service.clone() }).await?;
+            send(
+                project,
+                Request::Restart {
+                    service: service.clone(),
+                },
+            )
+            .await?;
             println!("restarted: {service}");
         }
         Cmd::Status => status(project).await?,
@@ -470,7 +569,10 @@ async fn run_daemon(project: &Project) -> Result<()> {
     run_daemon_with_shutdown(project, shutdown_tx).await
 }
 
-async fn run_daemon_with_shutdown(project: &Project, shutdown_tx: watch::Sender<bool>) -> Result<()> {
+async fn run_daemon_with_shutdown(
+    project: &Project,
+    shutdown_tx: watch::Sender<bool>,
+) -> Result<()> {
     let registry = project.registry()?;
     let manager = ProcessManager::new(registry, &project.state_dir)?;
     let shutdown_rx = shutdown_tx.subscribe();
@@ -500,7 +602,12 @@ async fn run_daemon_with_shutdown(project: &Project, shutdown_tx: watch::Sender<
     if let Err(error) = manager.shutdown().await {
         tracing::error!(%error, "failed to stop every service cleanly");
     }
-    served.with_context(|| format!("could not listen on {} (is another daemon running?)", project.pipe))?;
+    served.with_context(|| {
+        format!(
+            "could not listen on {} (is another daemon running?)",
+            project.pipe
+        )
+    })?;
     match gateway.await {
         Ok(Ok(())) => {}
         Ok(Err(error)) => return Err(error).context("gateway failed"),
@@ -526,8 +633,13 @@ async fn start_daemon(project: &Project) -> Result<()> {
 
     let exe = std::env::current_exe()?;
     let config = project.config_path.to_string_lossy().into_owned();
-    spawn_detached(&exe, &["--config", &config, "daemon", "run"], &project.config_dir, &log)
-        .context("failed to launch the daemon")?;
+    spawn_detached(
+        &exe,
+        &["--config", &config, "daemon", "run"],
+        &project.config_dir,
+        &log,
+    )
+    .context("failed to launch the daemon")?;
 
     for _ in 0..100 {
         sleep(Duration::from_millis(100)).await;
@@ -613,7 +725,9 @@ fn print_table(services: &[ServiceStatus]) {
             service.name,
             service.state.to_string(),
             service.port,
-            service.pid.map_or_else(|| "-".to_owned(), |pid| pid.to_string()),
+            service
+                .pid
+                .map_or_else(|| "-".to_owned(), |pid| pid.to_string()),
             service
                 .uptime_secs
                 .map_or_else(|| "-".to_owned(), format_uptime),
@@ -643,7 +757,10 @@ fn format_uptime(secs: u64) -> String {
 
 async fn logs(project: &Project, service: &str, lines: usize, follow: bool) -> Result<()> {
     project.registry()?.get(service)?;
-    let path = project.state_dir.join("logs").join(format!("{service}.log"));
+    let path = project
+        .state_dir
+        .join("logs")
+        .join(format!("{service}.log"));
     if !path.exists() {
         bail!("no logs yet for `{service}`");
     }
@@ -674,7 +791,12 @@ async fn logs(project: &Project, service: &str, lines: usize, follow: bool) -> R
     }
 }
 
-fn select(registry: &Registry, mut services: Vec<String>, profiles: &[String], all: bool) -> Result<Vec<String>> {
+fn select(
+    registry: &Registry,
+    mut services: Vec<String>,
+    profiles: &[String],
+    all: bool,
+) -> Result<Vec<String>> {
     if all {
         services.extend(registry.names());
     }
@@ -687,4 +809,48 @@ fn select(registry: &Registry, mut services: Vec<String>, profiles: &[String], a
         bail!("no services selected: pass service names, --profile or --all");
     }
     Ok(services)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PREFIX_STYLES, RESET, config_template, format_service_line};
+
+    #[test]
+    fn init_template_leaves_prefix_colors_commented() {
+        let template = config_template();
+        assert!(template.contains("# prefix_colors: true"));
+        assert!(
+            !template
+                .lines()
+                .any(|line| line.trim_start().starts_with("prefix_colors:"))
+        );
+    }
+
+    #[test]
+    fn colored_prefix_does_not_paint_the_log_text() {
+        let names = vec!["notification".to_owned(), "dashboard".to_owned()];
+        let line = format_service_line("notification", "\u{1b}[32mready\u{1b}[0m", &names, true);
+        let (prefix, rest) = line.split_once(RESET).unwrap();
+        assert_eq!(prefix, format!("{}[notification]", PREFIX_STYLES[0]));
+        assert_eq!(rest, " \u{1b}[32mready\u{1b}[0m");
+    }
+
+    #[test]
+    fn plain_prefix_when_colors_are_off() {
+        assert_eq!(
+            format_service_line("api", "ready", &[], false),
+            "[api] ready"
+        );
+    }
+
+    #[test]
+    fn each_service_keeps_the_same_color() {
+        let names = vec!["a".to_owned(), "b".to_owned()];
+        let first = format_service_line("b", "one", &names, true);
+        let again = format_service_line("b", "two", &names, true);
+        assert!(first.starts_with(PREFIX_STYLES[1]));
+        assert!(again.starts_with(PREFIX_STYLES[1]));
+        let other = format_service_line("a", "x", &names, true);
+        assert!(other.starts_with(PREFIX_STYLES[0]));
+    }
 }

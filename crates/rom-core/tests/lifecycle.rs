@@ -105,9 +105,14 @@ async fn starts_serves_and_stops_a_service() {
     let port = listen_port(&pm, "api");
     assert!(http_get_ok(port).await, "service answers HTTP");
 
-    pm.stop(&["api".to_owned()], false).await.expect("stop succeeds");
+    pm.stop(&["api".to_owned()], false)
+        .await
+        .expect("stop succeeds");
     assert_eq!(state(&pm, "api"), ServiceState::Sleeping);
-    assert!(port_is_closed(port).await, "listen port is released after stop");
+    assert!(
+        port_is_closed(port).await,
+        "listen port is released after stop"
+    );
 }
 
 #[tokio::test]
@@ -116,7 +121,9 @@ async fn stopping_kills_the_whole_process_tree() {
     fs::write(dir.join("server.js"), HTTP_SERVER_WITH_CHILD).unwrap();
     let pm = manager(&dir, &config_yaml(&[("tree", 39102, "")]));
 
-    pm.start(&["tree".to_owned()]).await.expect("start succeeds");
+    pm.start(&["tree".to_owned()])
+        .await
+        .expect("start succeeds");
     let pid: u32 = fs::read_to_string(dir.join("child.pid"))
         .expect("child pid written")
         .trim()
@@ -124,12 +131,17 @@ async fn stopping_kills_the_whole_process_tree() {
         .unwrap();
     assert!(process_alive(pid), "grandchild is running before stop");
 
-    pm.stop(&["tree".to_owned()], false).await.expect("stop succeeds");
+    pm.stop(&["tree".to_owned()], false)
+        .await
+        .expect("stop succeeds");
     let deadline = Instant::now() + Duration::from_secs(5);
     while process_alive(pid) && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(!process_alive(pid), "grandchild was terminated with its parent");
+    assert!(
+        !process_alive(pid),
+        "grandchild was terminated with its parent"
+    );
 }
 
 #[tokio::test]
@@ -158,7 +170,9 @@ async fn dependencies_start_first_and_block_unforced_stop() {
         &config_yaml(&[("user", 39104, ""), ("finance", 39105, "user")]),
     );
 
-    pm.start(&["finance".to_owned()]).await.expect("start succeeds");
+    pm.start(&["finance".to_owned()])
+        .await
+        .expect("start succeeds");
     assert_eq!(state(&pm, "user"), ServiceState::Running);
     assert_eq!(state(&pm, "finance"), ServiceState::Running);
 
@@ -166,10 +180,15 @@ async fn dependencies_start_first_and_block_unforced_stop() {
         .stop(&["user".to_owned()], false)
         .await
         .expect_err("stopping a required dependency must be refused");
-    assert!(matches!(error, RomError::StillRequired { .. }), "unexpected error: {error}");
+    assert!(
+        matches!(error, RomError::StillRequired { .. }),
+        "unexpected error: {error}"
+    );
     assert_eq!(state(&pm, "user"), ServiceState::Running);
 
-    pm.stop(&["user".to_owned()], true).await.expect("forced stop succeeds");
+    pm.stop(&["user".to_owned()], true)
+        .await
+        .expect("forced stop succeeds");
     assert_eq!(state(&pm, "user"), ServiceState::Sleeping);
     assert_eq!(state(&pm, "finance"), ServiceState::Sleeping);
 
@@ -185,9 +204,13 @@ async fn stopping_a_whole_chain_in_one_request_needs_no_force() {
         &config_yaml(&[("user", 39106, ""), ("finance", 39107, "user")]),
     );
 
-    pm.start(&["finance".to_owned()]).await.expect("start succeeds");
+    pm.start(&["finance".to_owned()])
+        .await
+        .expect("start succeeds");
     let names = ["user".to_owned(), "finance".to_owned()];
-    pm.stop(&names, false).await.expect("stopping the whole chain succeeds");
+    pm.stop(&names, false)
+        .await
+        .expect("stopping the whole chain succeeds");
     assert_eq!(state(&pm, "user"), ServiceState::Sleeping);
     assert_eq!(state(&pm, "finance"), ServiceState::Sleeping);
 }

@@ -69,7 +69,10 @@ async fn running_service_reports_working_set_and_cpu() {
 
     let snapshot = pm.status_snapshot();
     assert_eq!(snapshot.daemon.pid, std::process::id());
-    let daemon_ws = snapshot.daemon.working_set_bytes.expect("daemon working set");
+    let daemon_ws = snapshot
+        .daemon
+        .working_set_bytes
+        .expect("daemon working set");
     assert!(daemon_ws > 0);
     // Working set is not exclusive RAM — never treat the sum as physical usage.
     let _ = working_set.saturating_add(daemon_ws);

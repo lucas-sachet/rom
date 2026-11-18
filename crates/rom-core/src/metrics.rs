@@ -110,8 +110,15 @@ mod windows {
         let mut exit = creation;
         let mut kernel = creation;
         let mut user = creation;
-        let ok =
-            unsafe { GetProcessTimes(handle, &raw mut creation, &raw mut exit, &raw mut kernel, &raw mut user) };
+        let ok = unsafe {
+            GetProcessTimes(
+                handle,
+                &raw mut creation,
+                &raw mut exit,
+                &raw mut kernel,
+                &raw mut user,
+            )
+        };
         if ok == 0 {
             return Err(io::Error::last_os_error());
         }
@@ -160,15 +167,17 @@ mod unix {
                 let kb: u64 = rest
                     .split_whitespace()
                     .next()
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "VmRSS missing value"))?
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidData, "VmRSS missing value")
+                    })?
                     .parse()
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                 rss_kb = Some(kb);
                 break;
             }
         }
-        let rss_kb = rss_kb
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "VmRSS not found"))?;
+        let rss_kb =
+            rss_kb.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "VmRSS not found"))?;
 
         let stat = fs::read_to_string(format!("/proc/{pid}/stat"))?;
         let cpu_time = parse_linux_cpu(&stat)?;

@@ -34,6 +34,8 @@ pub struct Registry {
     pub shutdown_timeout: Duration,
     pub idle_timeout: Duration,
     pub connection_idle: Duration,
+    /// Color only the `[service]` prefix when streaming logs (`rom up`).
+    pub prefix_colors: bool,
     pub watch: WatchConfig,
     services: BTreeMap<String, ServiceDef>,
     profiles: BTreeMap<String, Vec<String>>,
@@ -44,7 +46,10 @@ impl Registry {
     pub fn from_config(config: Config, config_dir: &Path) -> Result<Self, RomError> {
         let mut errors = Vec::new();
         if config.version != 1 {
-            errors.push(format!("unsupported version {} (expected 1)", config.version));
+            errors.push(format!(
+                "unsupported version {} (expected 1)",
+                config.version
+            ));
         }
 
         let root = config_dir.join(&config.project.root);
@@ -131,6 +136,7 @@ impl Registry {
             shutdown_timeout: config.runtime.shutdown_timeout,
             idle_timeout: config.runtime.idle_timeout,
             connection_idle: config.runtime.connection_idle,
+            prefix_colors: config.runtime.prefix_colors,
             watch: config.watch,
             services,
             profiles,
@@ -178,7 +184,11 @@ impl Registry {
     pub fn transitive_dependents(&self, name: &str) -> BTreeSet<String> {
         let mut found = BTreeSet::new();
         for svc in self.services() {
-            if svc.dependencies.iter().any(|dep| dep == name || found.contains(dep)) {
+            if svc
+                .dependencies
+                .iter()
+                .any(|dep| dep == name || found.contains(dep))
+            {
                 found.insert(svc.name.clone());
             }
         }
@@ -274,12 +284,21 @@ mod tests {
     }
 
     #[test]
-    fn orders_dependencies_first() {
-        let registry = build(&config_yaml(
-            &[("app", 3001, "db"), ("db", 3002, "")],
-            "",
+    fn prefix_colors_follow_the_yaml() {
+        let off = build(&config_yaml(&[("api", 3001, "")], "")).unwrap();
+        assert!(!off.prefix_colors);
+
+        let on = build(&config_yaml(
+            &[("api", 3001, "")],
+            "runtime:\n  prefix_colors: true\n",
         ))
         .unwrap();
+        assert!(on.prefix_colors);
+    }
+
+    #[test]
+    fn orders_dependencies_first() {
+        let registry = build(&config_yaml(&[("app", 3001, "db"), ("db", 3002, "")], "")).unwrap();
         assert_eq!(registry.names(), vec!["db", "app"]);
         let set = registry.resolve_start_set(&["app".to_owned()]).unwrap();
         assert_eq!(set, vec!["db", "app"]);
@@ -287,10 +306,8 @@ mod tests {
 
     #[test]
     fn reports_duplicate_ports() {
-        let messages = invalid_messages(build(&config_yaml(
-            &[("a", 3001, ""), ("b", 3001, "")],
-            "",
-        )));
+        let messages =
+            invalid_messages(build(&config_yaml(&[("a", 3001, ""), ("b", 3001, "")], "")));
         assert!(messages.iter().any(|m| m.contains("port 3001")));
     }
 
@@ -324,11 +341,18 @@ mod tests {
     #[test]
     fn transitive_dependents_follow_the_chain() {
         let registry = build(&config_yaml(
-            &[("db", 3001, ""), ("user", 3002, "db"), ("fin", 3003, "user")],
+            &[
+                ("db", 3001, ""),
+                ("user", 3002, "db"),
+                ("fin", 3003, "user"),
+            ],
             "",
         ))
         .unwrap();
         let dependents = registry.transitive_dependents("db");
-        assert_eq!(dependents.into_iter().collect::<Vec<_>>(), vec!["fin", "user"]);
+        assert_eq!(
+            dependents.into_iter().collect::<Vec<_>>(),
+            vec!["fin", "user"]
+        );
     }
 }

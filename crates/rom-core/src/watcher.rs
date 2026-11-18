@@ -28,7 +28,10 @@ const IGNORED_DIR_NAMES: &[&str] = &[
 ];
 
 /// Runs until `shutdown` becomes `true`.
-pub async fn run(manager: Arc<ProcessManager>, mut shutdown: watch::Receiver<bool>) -> io::Result<()> {
+pub async fn run(
+    manager: Arc<ProcessManager>,
+    mut shutdown: watch::Receiver<bool>,
+) -> io::Result<()> {
     let roots = service_watch_roots(&manager);
     if roots.is_empty() {
         tracing::info!("watcher: no service directories to watch");
@@ -67,7 +70,13 @@ pub async fn run(manager: Arc<ProcessManager>, mut shutdown: watch::Receiver<boo
     let mut last_event = Instant::now();
 
     loop {
-        let wait = next_wait(batch_started, last_event, debounce, settle, !dirty.is_empty());
+        let wait = next_wait(
+            batch_started,
+            last_event,
+            debounce,
+            settle,
+            !dirty.is_empty(),
+        );
         tokio::select! {
             () = wait_until_true(&mut shutdown) => return Ok(()),
             path = event_rx.recv() => {
@@ -298,7 +307,9 @@ mod tests {
 
     #[test]
     fn ignores_node_modules_segments() {
-        assert!(is_ignored_path(Path::new(r"L:\proj\api\node_modules\x\index.js")));
+        assert!(is_ignored_path(Path::new(
+            r"L:\proj\api\node_modules\x\index.js"
+        )));
         assert!(is_ignored_path(Path::new(r"L:\proj\.git\HEAD")));
         assert!(!is_ignored_path(Path::new(r"L:\proj\api\src\index.js")));
     }
@@ -307,7 +318,10 @@ mod tests {
     fn picks_longest_service_prefix() {
         let mut services = BTreeMap::new();
         services.insert("api".to_owned(), PathBuf::from(r"L:\proj\api"));
-        services.insert("api-worker".to_owned(), PathBuf::from(r"L:\proj\api\worker"));
+        services.insert(
+            "api-worker".to_owned(),
+            PathBuf::from(r"L:\proj\api\worker"),
+        );
         assert_eq!(
             map_path_to_service(&services, Path::new(r"L:\proj\api\worker\main.js")).as_deref(),
             Some("api-worker")

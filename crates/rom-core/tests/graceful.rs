@@ -76,8 +76,8 @@ async fn ctrl_break_lets_node_exit_gracefully() {
     pm.stop(&["api".to_owned()], false).await.expect("stop");
     assert_eq!(state(&pm, "api"), ServiceState::Sleeping);
     let body = fs::read_to_string(&marker).unwrap_or_else(|error| {
-        let log = fs::read_to_string(dir.join(".rom").join("logs").join("api.log"))
-            .unwrap_or_default();
+        let log =
+            fs::read_to_string(dir.join(".rom").join("logs").join("api.log")).unwrap_or_default();
         panic!("graceful marker missing: {error}; log:\n{log}");
     });
     assert!(

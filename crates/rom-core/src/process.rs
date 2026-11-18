@@ -183,10 +183,11 @@ impl ProcessManager {
         for started_name in &started {
             self.arm_idle_if_needed(started_name);
         }
-        self.listen_port_of(name).ok_or_else(|| RomError::StartFailed {
-            service: name.to_owned(),
-            reason: "service started but has no listen port".to_owned(),
-        })
+        self.listen_port_of(name)
+            .ok_or_else(|| RomError::StartFailed {
+                service: name.to_owned(),
+                reason: "service started but has no listen port".to_owned(),
+            })
     }
 
     /// Marks a proxied connection as active (cancels any pending idle stop).
@@ -217,7 +218,11 @@ impl ProcessManager {
 
     /// Stops the given services. Fails if running services depend on them, unless `force` is set,
     /// in which case those dependents are stopped first.
-    pub async fn stop(self: &Arc<Self>, targets: &[String], force: bool) -> Result<Vec<String>, RomError> {
+    pub async fn stop(
+        self: &Arc<Self>,
+        targets: &[String],
+        force: bool,
+    ) -> Result<Vec<String>, RomError> {
         let _guard = self.lifecycle.lock().await;
         self.stop_locked(targets, force).await
     }
@@ -286,9 +291,7 @@ impl ProcessManager {
                         .map(|i| i.started_at.elapsed().as_secs()),
                     restart_count: slot.restart_count,
                     active_connections: slot.active_connections as u32,
-                    last_activity_secs_ago: slot
-                        .last_activity
-                        .map(|at| at.elapsed().as_secs()),
+                    last_activity_secs_ago: slot.last_activity.map(|at| at.elapsed().as_secs()),
                     working_set_bytes: process.as_ref().map(|m| m.working_set_bytes),
                     cpu_time_secs: process.as_ref().map(|m| m.cpu_time.as_secs_f64()),
                     last_error: slot.last_error.clone(),
@@ -553,7 +556,10 @@ impl ProcessManager {
     fn spawn(&self, def: &ServiceDef, listen_port: u16) -> Result<Instance, RomError> {
         let log_path = self.log_path(&def.name);
         {
-            let mut log = OpenOptions::new().create(true).append(true).open(&log_path)?;
+            let mut log = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)?;
             writeln!(
                 log,
                 "--- rom: starting `{}` on listen port {listen_port} (public {}) at unix {} ---",
@@ -593,7 +599,8 @@ impl ProcessManager {
                         ServiceState::Running => ServiceState::Crashed,
                         _ => ServiceState::Failed,
                     };
-                    slot.last_error = (next != ServiceState::Sleeping).then(|| describe_exit(&status));
+                    slot.last_error =
+                        (next != ServiceState::Sleeping).then(|| describe_exit(&status));
                     slot.state = next;
                     // Dropping the last Arc<ProcessTree> reaps leftover descendants.
                     slot.instance = None;
@@ -619,12 +626,13 @@ impl ProcessManager {
         env: &std::collections::BTreeMap<String, String>,
         tree: &ProcessTree,
     ) -> Result<(u32, ExitFuture), RomError> {
-        let child = crate::win_spawn::spawn_hidden(&def.command, &def.args, &def.dir, log_path, env)
-            .map_err(|source| RomError::Spawn {
-                service: def.name.clone(),
-                command: def.command.clone(),
-                source,
-            })?;
+        let child =
+            crate::win_spawn::spawn_hidden(&def.command, &def.args, &def.dir, log_path, env)
+                .map_err(|source| RomError::Spawn {
+                    service: def.name.clone(),
+                    command: def.command.clone(),
+                    source,
+                })?;
         let pid = child.id();
         // NOTE: assignment happens right after spawn, so a grandchild created in that
         // instant could escape the tree. Node services do not do this during boot.
@@ -647,7 +655,10 @@ impl ProcessManager {
 
         use tokio::process::Command;
 
-        let log = OpenOptions::new().create(true).append(true).open(log_path)?;
+        let log = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_path)?;
         let stderr = log.try_clone()?;
         let mut command = Command::new(&def.command);
         command
@@ -705,7 +716,8 @@ impl ProcessManager {
     }
 }
 
-type ExitFuture = std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<ExitStatus>> + Send>>;
+type ExitFuture =
+    std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<ExitStatus>> + Send>>;
 
 async fn wait_for_exit(mut exited: watch::Receiver<bool>) {
     let _ = exited.wait_for(|done| *done).await;
@@ -715,7 +727,9 @@ fn is_node_command(command: &str) -> bool {
     Path::new(command)
         .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case("node") || name.eq_ignore_ascii_case("node.exe"))
+        .is_some_and(|name| {
+            name.eq_ignore_ascii_case("node") || name.eq_ignore_ascii_case("node.exe")
+        })
 }
 
 fn lock(slots: &Mutex<BTreeMap<String, Slot>>) -> MutexGuard<'_, BTreeMap<String, Slot>> {

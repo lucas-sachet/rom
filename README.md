@@ -48,6 +48,10 @@ runtime:
   shutdown_timeout: 30s
   idle_timeout: 30s             # stop on-demand services with no proxied connections
   connection_idle: 5s           # close keep-alive with no bytes either way
+  # Color only the [service] prefix in `rom up`, like concurrently.
+  # The log text itself is not colored. Has no effect when stdout is not a
+  # terminal or when NO_COLOR is set. Uncomment to enable:
+  # prefix_colors: true
 
 watch:
   debounce: 300ms               # min time from first change before restart
@@ -86,6 +90,7 @@ Notes:
 - A connection to a sleeping service starts it (and its yaml dependencies) once; concurrent clients share that start.
 - On-demand services stop after `idle_timeout` with no open proxied connections. Quiet keep-alives are closed after `connection_idle` and do not keep the service busy. `mode: persistent` never idle-stops.
 - One project watcher restarts **running** services when their files change (`node_modules`, `.git`, `dist`, … are not watched). Sleeping services stay asleep. A `.git/index.lock` pauses reloads.
+- `runtime.prefix_colors` (off unless uncommented) paints only the `[service]` tag in `rom up`. Each service keeps one background color; the log line is printed as the process wrote it.
 - Design notes for the gateway, idle detection and shutdown are in [docs/decisions.md](docs/decisions.md).
 - Service directories are used as-is. Each service keeps its own `node_modules`.
 - Validation reports duplicate ports, unknown dependencies, dependency cycles, missing directories and unknown profile members.

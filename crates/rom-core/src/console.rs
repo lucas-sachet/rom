@@ -14,6 +14,14 @@ pub fn send_graceful_stop(pid: u32) -> io::Result<()> {
     }
 }
 
+/// Enables ANSI colors on stdout. Unix terminals already honor them. On Windows
+/// this sets `ENABLE_VIRTUAL_TERMINAL_PROCESSING` and does nothing when stdout
+/// is not a console.
+pub fn enable_ansi_stdout() {
+    #[cfg(windows)]
+    windows::enable_virtual_terminal_processing();
+}
+
 /// If this process was launched as a Windows ctrl-break helper, deliver and exit.
 /// Always returns `false` on Unix.
 pub fn maybe_run_as_helper() -> bool {
@@ -41,7 +49,8 @@ mod windows {
 
     use windows_sys::Win32::Foundation::TRUE;
     use windows_sys::Win32::System::Console::{
-        AttachConsole, CTRL_BREAK_EVENT, FreeConsole, GenerateConsoleCtrlEvent, SetConsoleCtrlHandler,
+        AttachConsole, CTRL_BREAK_EVENT, FreeConsole, GenerateConsoleCtrlEvent,
+        SetConsoleCtrlHandler,
     };
 
     const STATUS_CONTROL_C_EXIT: i32 = -1073741510; // 0xC000013A as i32
@@ -53,6 +62,26 @@ mod windows {
             TRUE
         } else {
             0
+        }
+    }
+
+    pub fn enable_virtual_terminal_processing() {
+        use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+        use windows_sys::Win32::System::Console::{
+            ENABLE_VIRTUAL_TERMINAL_PROCESSING, GetConsoleMode, GetStdHandle, STD_OUTPUT_HANDLE,
+            SetConsoleMode,
+        };
+
+        unsafe {
+            let handle = GetStdHandle(STD_OUTPUT_HANDLE);
+            if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+                return;
+            }
+            let mut mode = 0u32;
+            if GetConsoleMode(handle, &mut mode) == 0 {
+                return;
+            }
+            let _ = SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
         }
     }
 
@@ -167,7 +196,6 @@ mod windows {
             None => Ok(()),
         }
     }
-
 }
 
 #[cfg(unix)]
@@ -176,7 +204,10 @@ mod unix {
 
     pub fn send_sigterm(pid: u32) -> io::Result<()> {
         let Ok(pid) = i32::try_from(pid) else {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "pid out of range"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "pid out of range",
+            ));
         };
         let result = unsafe { libc::kill(pid, libc::SIGTERM) };
         if result == 0 {

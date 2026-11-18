@@ -46,7 +46,17 @@ pub struct Runtime {
     /// Close a proxied connection after this long with no bytes in either direction.
     #[serde(deserialize_with = "deserialize_duration")]
     pub connection_idle: Duration,
+    /// When true, `rom up` colors only the `[service]` prefix. Log text is not recolored.
+    pub prefix_colors: bool,
 }
+
+/// Commented hint inserted into generated `rom.yaml` files. Kept commented so
+/// prefix colors stay off until someone opts in.
+pub const PREFIX_COLORS_YAML_HINT: &str = r#"  # Color only the [service] prefix in `rom up`, like concurrently.
+  # The log text itself is not colored. Has no effect when stdout is not a
+  # terminal or when NO_COLOR is set. Uncomment to enable:
+  # prefix_colors: true
+"#;
 
 impl Default for Runtime {
     fn default() -> Self {
@@ -55,6 +65,7 @@ impl Default for Runtime {
             shutdown_timeout: Duration::from_secs(30),
             idle_timeout: Duration::from_secs(30),
             connection_idle: Duration::from_secs(5),
+            prefix_colors: false,
         }
     }
 }
@@ -143,7 +154,9 @@ pub fn parse_duration(input: &str) -> Result<Duration, String> {
         "ms" => Ok(Duration::from_millis(value)),
         "s" => Ok(Duration::from_secs(value)),
         "m" => Ok(Duration::from_secs(value * 60)),
-        _ => Err(format!("invalid duration `{input}` (use e.g. 500ms, 30s, 2m)")),
+        _ => Err(format!(
+            "invalid duration `{input}` (use e.g. 500ms, 30s, 2m)"
+        )),
     }
 }
 
@@ -179,5 +192,30 @@ mod tests {
         assert_eq!(parse_duration("2m"), Ok(Duration::from_secs(120)));
         assert!(parse_duration("30").is_err());
         assert!(parse_duration("abc").is_err());
+    }
+
+    #[test]
+    fn prefix_colors_stay_off_unless_enabled() {
+        let off: Config =
+            serde_yaml_ng::from_str("version: 1\nproject:\n  name: t\nservices: {}\n").unwrap();
+        assert!(!off.runtime.prefix_colors);
+
+        let hinted = format!(
+            "version: 1\nproject:\n  name: t\nruntime:\n  startup_timeout: 30s\n{PREFIX_COLORS_YAML_HINT}services: {{}}\n"
+        );
+        let from_hint: Config = serde_yaml_ng::from_str(&hinted).unwrap();
+        assert!(!from_hint.runtime.prefix_colors);
+        assert!(PREFIX_COLORS_YAML_HINT.contains("# prefix_colors: true"));
+        assert!(
+            !PREFIX_COLORS_YAML_HINT
+                .lines()
+                .any(|line| line.trim_start().starts_with("prefix_colors:"))
+        );
+
+        let on: Config = serde_yaml_ng::from_str(
+            "version: 1\nproject:\n  name: t\nruntime:\n  prefix_colors: true\nservices: {}\n",
+        )
+        .unwrap();
+        assert!(on.runtime.prefix_colors);
     }
 }

@@ -36,7 +36,9 @@ async fn windows_serve(
     use tokio::net::windows::named_pipe::ServerOptions;
 
     let mut shutdown = shutdown_tx.subscribe();
-    let mut server = ServerOptions::new().first_pipe_instance(true).create(pipe)?;
+    let mut server = ServerOptions::new()
+        .first_pipe_instance(true)
+        .create(pipe)?;
     loop {
         let connected = tokio::select! {
             result = server.connect() => Some(result),
@@ -164,7 +166,9 @@ async fn dispatch(request: Request, manager: &Arc<ProcessManager>) -> (Response,
             )
         }
         Request::Start { services } => (to_response(manager.start(&services).await), false),
-        Request::Stop { services, force } => (to_response(manager.stop(&services, force).await), false),
+        Request::Stop { services, force } => {
+            (to_response(manager.stop(&services, force).await), false)
+        }
         Request::Restart { service } => {
             let result = manager
                 .restart(&service)
@@ -172,7 +176,12 @@ async fn dispatch(request: Request, manager: &Arc<ProcessManager>) -> (Response,
                 .map(|()| vec![service.clone()]);
             (to_response(result), false)
         }
-        Request::Shutdown => (Response::Ok { changed: Vec::new() }, true),
+        Request::Shutdown => (
+            Response::Ok {
+                changed: Vec::new(),
+            },
+            true,
+        ),
     }
 }
 

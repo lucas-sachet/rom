@@ -69,7 +69,10 @@ async fn http_get_body(port: u16) -> String {
         .await
         .expect("write request");
     let mut response = String::new();
-    stream.read_to_string(&mut response).await.expect("read response");
+    stream
+        .read_to_string(&mut response)
+        .await
+        .expect("read response");
     response
         .rsplit("\r\n\r\n")
         .next()
@@ -110,7 +113,10 @@ async fn connection_starts_dependencies_and_serves_the_original_client() {
     assert_eq!(state(&pm, "billing"), ServiceState::Sleeping);
 
     let _ = shutdown_tx.send(true);
-    gateway_task.await.expect("gateway join").expect("gateway serve");
+    gateway_task
+        .await
+        .expect("gateway join")
+        .expect("gateway serve");
     pm.shutdown().await.expect("shutdown");
 }
 
@@ -148,6 +154,9 @@ async fn concurrent_connections_create_a_single_process() {
     assert_eq!(pid(&pm, "api"), first_pid);
 
     let _ = shutdown_tx.send(true);
-    gateway_task.await.expect("gateway join").expect("gateway serve");
+    gateway_task
+        .await
+        .expect("gateway join")
+        .expect("gateway serve");
     pm.shutdown().await.expect("shutdown");
 }

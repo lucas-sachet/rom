@@ -95,7 +95,10 @@ mod unix_tree {
 
         pub fn assign_pgid(&self, pid: u32) -> io::Result<()> {
             let Ok(pid) = i32::try_from(pid) else {
-                return Err(io::Error::new(io::ErrorKind::InvalidInput, "pid out of range"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "pid out of range",
+                ));
             };
             *self.pgid.lock().unwrap_or_else(|e| e.into_inner()) = Some(pid);
             Ok(())
@@ -122,7 +125,7 @@ mod unix_tree {
     }
 }
 
-#[cfg(windows)]
-pub use windows_tree::ProcessTree;
 #[cfg(unix)]
 pub use unix_tree::ProcessTree;
+#[cfg(windows)]
+pub use windows_tree::ProcessTree;

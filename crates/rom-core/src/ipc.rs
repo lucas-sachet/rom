@@ -27,25 +27,31 @@ pub enum Request {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Response {
-    Ok { changed: Vec<String> },
+    Ok {
+        changed: Vec<String>,
+    },
     Status {
         daemon: DaemonStatus,
         services: Vec<ServiceStatus>,
     },
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 /// IPC endpoint unique to the project directory (FNV-1a over the normalized path).
 pub fn pipe_name(config_dir: &Path) -> String {
     let normalized = config_dir.to_string_lossy().to_lowercase();
-    let hash = normalized.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
-    });
+    let hash = normalized
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+        });
     #[cfg(windows)]
     {
         format!(r"\\.\pipe\rom-{hash:016x}")
     }
-#[cfg(unix)]
+    #[cfg(unix)]
     {
         use std::path::PathBuf;
         let runtime = std::env::var_os("XDG_RUNTIME_DIR")
@@ -99,7 +105,10 @@ async fn connect(pipe: &str) -> Result<tokio::net::windows::named_pipe::NamedPip
 async fn connect(pipe: &str) -> Result<tokio::net::UnixStream, RomError> {
     match tokio::net::UnixStream::connect(pipe).await {
         Ok(stream) => Ok(stream),
-        Err(error) if error.kind() == io::ErrorKind::NotFound || error.kind() == io::ErrorKind::ConnectionRefused => {
+        Err(error)
+            if error.kind() == io::ErrorKind::NotFound
+                || error.kind() == io::ErrorKind::ConnectionRefused =>
+        {
             Err(RomError::DaemonNotRunning)
         }
         Err(error) => Err(error.into()),

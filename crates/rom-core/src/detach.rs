@@ -33,12 +33,14 @@ mod windows_detach {
     use std::path::Path;
     use std::ptr::{null, null_mut};
 
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation};
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation,
+    };
     use windows_sys::Win32::System::Threading::{
         CREATE_NEW_PROCESS_GROUP, CreateProcessW, DETACHED_PROCESS, DeleteProcThreadAttributeList,
-        EXTENDED_STARTUPINFO_PRESENT, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
-        PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW,
-        STARTUPINFOW, UpdateProcThreadAttribute,
+        EXTENDED_STARTUPINFO_PRESENT, InitializeProcThreadAttributeList,
+        LPPROC_THREAD_ATTRIBUTE_LIST, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION,
+        STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, UpdateProcThreadAttribute,
     };
 
     pub fn spawn_detached(exe: &Path, args: &[&str], cwd: &Path, log: &File) -> io::Result<u32> {
@@ -48,22 +50,29 @@ mod windows_detach {
         let mut handles: [HANDLE; 2] = [stdin_handle, log_handle];
 
         for handle in handles {
-            if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) } == 0 {
+            if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) }
+                == 0
+            {
                 return Err(io::Error::last_os_error());
             }
         }
 
-        let mut command_line = wide(&std::iter::once(quote_arg(&exe.to_string_lossy()))
-            .chain(args.iter().map(|arg| quote_arg(arg)))
-            .collect::<Vec<_>>()
-            .join(" "));
+        let mut command_line = wide(
+            &std::iter::once(quote_arg(&exe.to_string_lossy()))
+                .chain(args.iter().map(|arg| quote_arg(arg)))
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
         let current_dir = wide_os(cwd.as_os_str());
 
         let mut attribute_size = 0usize;
         unsafe { InitializeProcThreadAttributeList(null_mut(), 1, 0, &mut attribute_size) };
         let mut attribute_storage = vec![0usize; attribute_size.div_ceil(size_of::<usize>())];
-        let attribute_list = attribute_storage.as_mut_ptr().cast::<c_void>() as LPPROC_THREAD_ATTRIBUTE_LIST;
-        if unsafe { InitializeProcThreadAttributeList(attribute_list, 1, 0, &mut attribute_size) } == 0 {
+        let attribute_list =
+            attribute_storage.as_mut_ptr().cast::<c_void>() as LPPROC_THREAD_ATTRIBUTE_LIST;
+        if unsafe { InitializeProcThreadAttributeList(attribute_list, 1, 0, &mut attribute_size) }
+            == 0
+        {
             return Err(io::Error::last_os_error());
         }
         let updated = unsafe {

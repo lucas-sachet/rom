@@ -119,7 +119,11 @@ async fn sleeping_service_is_not_started_by_file_change() {
     sleep(Duration::from_millis(100)).await;
 
     assert_eq!(state(&pm, "api"), ServiceState::Sleeping);
-    fs::write(api.join("server.js"), format!("{HTTP_SERVER}\n// sleep-touch\n")).unwrap();
+    fs::write(
+        api.join("server.js"),
+        format!("{HTTP_SERVER}\n// sleep-touch\n"),
+    )
+    .unwrap();
     sleep(Duration::from_millis(500)).await;
     assert_eq!(state(&pm, "api"), ServiceState::Sleeping);
     assert_eq!(restart_count(&pm, "api"), 0);

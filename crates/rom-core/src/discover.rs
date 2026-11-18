@@ -131,7 +131,9 @@ pub fn render_yaml(discovery: &Discovery) -> String {
     out.push_str("  startup_timeout: 30s\n");
     out.push_str("  shutdown_timeout: 30s\n");
     out.push_str("  idle_timeout: 30s\n");
-    out.push_str("  connection_idle: 5s\n\n");
+    out.push_str("  connection_idle: 5s\n");
+    out.push_str(crate::config::PREFIX_COLORS_YAML_HINT);
+    out.push('\n');
     out.push_str("watch:\n");
     out.push_str("  debounce: 300ms\n");
     out.push_str("  settle: 500ms\n\n");
@@ -146,7 +148,10 @@ pub fn render_yaml(discovery: &Discovery) -> String {
             out.push_str(&format!("  {}:\n", service.name));
             out.push_str(&format!("    path: {}\n", service.path));
             out.push_str(&format!("    command: {}\n", service.command));
-            out.push_str(&format!("    args: [{}]\n", yaml_string_list(&service.args)));
+            out.push_str(&format!(
+                "    args: [{}]\n",
+                yaml_string_list(&service.args)
+            ));
             out.push_str(&format!("    port: {}\n", service.port));
             out.push_str("    dependencies: []\n");
         }
@@ -244,7 +249,8 @@ fn service_name_for(dir: &Path, package: &Value) -> Result<String, String> {
     }
     Err(format!(
         "directory name `{}` is not a valid rom service name",
-        dir.file_name().map_or_else(|| "?".into(), |n| n.to_string_lossy().into_owned())
+        dir.file_name()
+            .map_or_else(|| "?".into(), |n| n.to_string_lossy().into_owned())
     ))
 }
 
@@ -323,7 +329,14 @@ fn command_for_entrypoint(service_dir: &Path, entrypoint: &Path) -> (String, Vec
 
 fn find_port(dir: &Path, entrypoint: &Path) -> Option<u16> {
     let mut files = vec![entrypoint.to_path_buf()];
-    for name in ["config.js", "config.ts", "src/config.js", "src/config.ts", ".env", "env.local"] {
+    for name in [
+        "config.js",
+        "config.ts",
+        "src/config.js",
+        "src/config.ts",
+        ".env",
+        "env.local",
+    ] {
         let path = dir.join(name);
         if path.is_file() {
             files.push(path);
@@ -434,7 +447,10 @@ mod tests {
 
     #[test]
     fn extracts_ports_from_common_patterns() {
-        assert_eq!(extract_port("const port = process.env.PORT || 3001;"), Some(3001));
+        assert_eq!(
+            extract_port("const port = process.env.PORT || 3001;"),
+            Some(3001)
+        );
         assert_eq!(extract_port("PORT=4010\n"), Some(4010));
         assert_eq!(extract_port("app.listen(3088);"), Some(3088));
         assert_eq!(extract_port("app.listen(Number(process.env.PORT));"), None);
@@ -465,5 +481,8 @@ mod tests {
         assert!(yaml.contains("api:"));
         assert!(yaml.contains("dependencies: []"));
         assert!(yaml.contains("port: 3001"));
+        assert!(yaml.contains("# prefix_colors: true"));
+        let config: crate::config::Config = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert!(!config.runtime.prefix_colors);
     }
 }
